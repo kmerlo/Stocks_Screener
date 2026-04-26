@@ -1,0 +1,19 @@
+# 1. Colleghiamo il tuo progetto locale al repository GitHub che hai creato
+git remote add origin https://github.com/kmerlo/Stocks_Screener.git
+
+# 2. Rinominiamo il branch in "main" (standard moderno di GitHub)
+git branch -M main
+
+# 3. Carichiamo i file (potrebbe aprirsi il browser per chiederti il login)
+git push -u origin main
+
+
+
+# 1. Rimuove il database dalla "memoria" di Git (il file NON verrà cancellato dal tuo PC)
+git rm --cached finance_app.db
+
+# 2. Crea un salvataggio (commit) di questa rimozione
+git commit -m "chore: rimosso database dal repository (mantenuto solo localmente)"
+
+# 3. Aggiorna GitHub
+git push origin main

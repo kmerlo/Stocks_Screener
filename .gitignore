@@ -1,0 +1,21 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Databases (exclude private data)
+finance_app.db
+*.db
+
+# Data & Debug
+CSV/*
+!CSV/.gitkeep
+error_page.html
+*.log
+python-to-gsheet-*.json

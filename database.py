@@ -1,0 +1,180 @@
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, relationship
+from sqlalchemy.sql import func
+import datetime
+
+SQLALCHEMY_DATABASE_URL = "sqlite:///./finance_app.db"
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+class TickerList(Base):
+    __tablename__ = "ticker_lists"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    tickers = relationship("Ticker", back_populates="list_ref", cascade="all, delete-orphan")
+
+class Ticker(Base):
+    __tablename__ = "tickers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String, index=True)
+    name = Column(String, nullable=True)
+    list_id = Column(Integer, ForeignKey("ticker_lists.id"))
+    list_ref = relationship("TickerList", back_populates="tickers")
+
+    __table_args__ = (UniqueConstraint('symbol', 'list_id', name='_symbol_list_uc'),)
+
+class PriceData(Base):
+    __tablename__ = "price_data"
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String, index=True)
+    date = Column(DateTime, index=True)
+    open = Column(Float)
+    high = Column(Float)
+    low = Column(Float)
+    close = Column(Float)
+    adj_close = Column(Float)
+    volume = Column(Integer)
+
+    __table_args__ = (UniqueConstraint('symbol', 'date', name='_symbol_date_uc'),)
+
+class ChartTemplate(Base):
+    __tablename__ = "chart_templates"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    indicators = relationship("TemplateIndicator", back_populates="template", cascade="all, delete-orphan")
+
+class TemplateIndicator(Base):
+    __tablename__ = "template_indicators"
+
+    id = Column(Integer, primary_key=True, index=True)
+    template_id = Column(Integer, ForeignKey("chart_templates.id"))
+    indicator_type = Column(String)  # SMA, EMA, RSI, MACD, etc.
+    parameters = Column(String)      # JSON string of settings e.g. {"period": 14}
+    pane_index = Column(Integer, default=0)  # 0: Main, 1+: Subplots
+    color = Column(String, nullable=True)
+
+    template = relationship("ChartTemplate", back_populates="indicators")
+
+class ScreeningSheet(Base):
+    __tablename__ = "screening_sheets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    columns = relationship("ScreeningColumn", back_populates="sheet", cascade="all, delete-orphan")
+
+class ScreeningColumn(Base):
+    __tablename__ = "screening_columns"
+
+    id = Column(Integer, primary_key=True, index=True)
+    sheet_id = Column(Integer, ForeignKey("screening_sheets.id"))
+    indicator_type = Column(String)
+    parameters = Column(String) # JSON string
+    timeframe = Column(String, default="D")
+    color = Column(String, nullable=True)
+
+    sheet = relationship("ScreeningSheet", back_populates="columns")
+
+class ScreeningValue(Base):
+    __tablename__ = "screening_values"
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String, index=True)
+    indicator_key = Column(String, index=True) # e.g. "sma_period20_W"
+    date = Column(DateTime, index=True)
+    value = Column(Float)
+
+    __table_args__ = (UniqueConstraint('symbol', 'indicator_key', 'date', name='_symbol_ind_date_uc'),)
+
+class Drawing(Base):
+    __tablename__ = "drawings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String, index=True)
+    type = Column(String)  # horizontal_line, trend_line, ray, etc.
+    points = Column(String)  # JSON string of coordinates: [{"time": "...", "price": ...}]
+    color = Column(String)
+    line_width = Column(Float)
+    text = Column(String, nullable=True)
+    
+    alarms = relationship("Alarm", back_populates="drawing", cascade="all, delete-orphan")
+
+class Alarm(Base):
+    __tablename__ = "alarms"
+
+    id = Column(Integer, primary_key=True, index=True)
+    drawing_id = Column(Integer, ForeignKey("drawings.id"))
+    is_active = Column(Integer, default=1)  # 0 or 1
+    trigger_type = Column(String, default="close")  # close or intraday
+    triggered_at = Column(DateTime, nullable=True)
+    last_checked_price = Column(Float, nullable=True)
+    
+    drawing = relationship("Drawing", back_populates="alarms")
+
+class FundamentalData(Base):
+    __tablename__ = "fundamental_data"
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String, unique=True, index=True)
+    
+    # Key Metrics
+    market_cap = Column(Float, nullable=True)
+    pe_ratio = Column(Float, nullable=True)
+    forward_pe = Column(Float, nullable=True)
+    ps_ratio = Column(Float, nullable=True)
+    pb_ratio = Column(Float, nullable=True)
+    dividend_yield = Column(Float, nullable=True)
+    beta = Column(Float, nullable=True)
+    
+    # Financials
+    total_revenue = Column(Float, nullable=True)
+    revenue_growth = Column(Float, nullable=True)
+    gross_margins = Column(Float, nullable=True)
+    ebitda_margins = Column(Float, nullable=True)
+    operating_margins = Column(Float, nullable=True)
+    profit_margins = Column(Float, nullable=True)
+    
+    # Cash/Debt
+    total_cash = Column(Float, nullable=True)
+    total_debt = Column(Float, nullable=True)
+    current_ratio = Column(Float, nullable=True)
+    
+    # Metadata
+    sector = Column(String, nullable=True)
+    industry = Column(String, nullable=True)
+    long_business_summary = Column(String, nullable=True)
+    
+    last_updated = Column(DateTime, default=func.now(), onupdate=func.now())
+    raw_info = Column(String, nullable=True) # Full JSON dump for future use
+
+class TickerMapping(Base):
+    __tablename__ = "ticker_mappings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol_yahoo = Column(String, unique=True, index=True)
+    symbol_investing = Column(String, index=True)
+    name = Column(String, nullable=True)
+    last_updated = Column(DateTime, default=func.now(), onupdate=func.now())
+
+class PortfolioURL(Base):
+    __tablename__ = "portfolio_urls"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    url = Column(String)
+    last_updated = Column(DateTime, default=func.now(), onupdate=func.now())
+
+def init_db():
+    Base.metadata.create_all(bind=engine)
+
+if __name__ == "__main__":
+    init_db()

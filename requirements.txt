@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+sqlalchemy
+pandas-ta-classic>=0.3.59
+gspread>=6.0.0
+scipy>=1.15.0
+yfinance
+pandas
+pytickersymbols
+python-multipart

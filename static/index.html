@@ -1,0 +1,1075 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Financial Screener & Monitor</title>
+    <link rel="stylesheet" href="style.css?v=2">
+    <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+
+<body>
+    <div id="sidebar">
+        <div class="sidebar-header">StockScreener</div>
+        <div class="sidebar-nav">
+            <div class="nav-item active" data-view="monitoring">Grafico</div>
+            <div class="nav-item" data-view="lists">Ticker Lists</div>
+            <div class="nav-item" data-view="screening">Screening</div>
+            <div class="nav-item" data-view="historical">Dati Storici</div>
+            <div class="nav-item" data-view="alarms">Allarmi</div>
+            <div class="nav-item" data-view="maintenance">Manutenzione DB</div>
+            <div class="nav-item" data-view="gsheet">Google Sheet</div>
+            <div class="nav-item" data-view="investing">Investing.com</div>
+        </div>
+    </div>
+
+    <div id="main-content">
+        <header>
+            <div style="display:flex; align-items:center; gap:10px;">
+                <button id="sidebar-toggle" title="Toggle sidebar">☰</button>
+                <div id="view-title">Grafico</div>
+            </div>
+
+            <div id="global-controls">
+                <!-- Group for monitoring-specific controls (hidden in other views) -->
+                <div id="monitoring-controls-group" class="header-group">
+                    <div class="header-group">
+                        <label>Ticker:</label>
+                        <select id="ticker-select" style="min-width: 120px;">
+                            <option value="">Select ticker...</option>
+                        </select>
+                    </div>
+                    <div class="header-group">
+                        <label>TF:</label>
+                        <select id="timeframe-select" style="min-width: 80px;">
+                            <option value="D">Daily</option>
+                            <option value="W">Weekly</option>
+                            <option value="M">Monthly</option>
+                        </select>
+                    </div>
+                    <button id="refresh-chart-btn" class="header-btn secondary">Refresh</button>
+                    <button id="toggle-settings-btn" class="header-btn secondary"
+                        title="Mostra/Nascondi Impostazioni">⚙️</button>
+                    <div class="header-divider"></div>
+                </div>
+
+                <div class="header-group">
+                    <label>Anni:</label>
+                    <input type="number" id="extend-years" value="10" min="1" max="50" style="width: 45px;">
+                    <button id="update-data-btn" class="header-btn">Aggiorna Dati</button>
+                    <button id="extend-history-btn" class="header-btn secondary">Estendi</button>
+                    <button id="delete-ticker-data-btn" class="header-btn danger">Elimina</button>
+                    <label style="margin-left: 10px; font-size: 0.8rem;">Dal:</label>
+                    <input type="date" id="delete-start-date" style="padding: 2px 5px; font-size: 0.8rem;">
+                    <button id="delete-data-from-date-btn" class="header-btn danger">Pulisci</button>
+                    <label class="bulk-label">
+                        <input type="checkbox" id="bulk-apply"> Lista
+                    </label>
+                </div>
+
+                <div class="header-divider"></div>
+
+                <div class="header-group">
+                    <select id="active-list-select">
+                        <option value="">Select a list...</option>
+                    </select>
+                    <button id="clear-subuniverse-btn" title="Ritorna alla lista principale"
+                        class="header-btn secondary hidden">Clear Sub-list</button>
+                    <button id="delete-list-btn" title="Delete current list" class="header-btn danger">Del List</button>
+                </div>
+            </div>
+            <span id="update-status" style="font-size: 0.75rem; color: #8b949e; margin-left: 10px;"></span>
+        </header>
+
+        <!-- Monitoring View -->
+        <div id="monitoring-view" class="view-container">
+            <div class="card" style="padding: 10px; margin-bottom: 10px;">
+                <!-- Collapsible Settings Box -->
+                <div id="settings-collapsible" class="collapsible-content hidden">
+                    <div class="controls-row"
+                        style="padding: 15px; background: rgba(255,255,255,0.03); border-radius: 8px;">
+                        <div class="control-group">
+                            <label>Grafico:</label>
+                            <select id="chart-type-select">
+                                <option value="candle">Candele</option>
+                                <option value="line">Linea</option>
+                            </select>
+                        </div>
+                        <div class="control-group">
+                            <label>Prezzo:</label>
+                            <select id="price-type-select">
+                                <option value="close">Close</option>
+                                <option value="adj_close">Adj Close</option>
+                            </select>
+                        </div>
+                        <div class="control-group">
+                            <label>Scala Y:</label>
+                            <select id="scale-type-select">
+                                <option value="0">Lineare</option>
+                                <option value="1">Logaritmica</option>
+                            </select>
+                        </div>
+                        <div class="control-group">
+                            <label>Barre Visibili:</label>
+                            <input type="number" id="visible-bars-input" value="120" min="10" max="1000"
+                                style="width: 60px;">
+                        </div>
+                        <div class="control-group">
+                            <label>Margine Dx (%):</label>
+                            <input type="number" id="right-margin-input" value="5" min="0" max="50"
+                                style="width: 60px;">
+                        </div>
+                        <div class="control-group">
+                            <label>H Main:</label>
+                            <input type="number" id="main-height-input" value="400" min="200" max="1200"
+                                style="width: 60px;">
+                        </div>
+                        <div class="control-group">
+                            <label>H Sub:</label>
+                            <input type="number" id="sub-height-input" value="100" min="100" max="800"
+                                style="width: 60px;">
+                        </div>
+                        <div style="width: 1px; height: 30px; background: var(--border-color); margin: 0 10px;"></div>
+                        <div class="control-group">
+                            <label>Indicatori:</label>
+                            <div style="display: flex; flex-direction: column; gap: 4px;">
+                                <input type="text" id="indicator-search" placeholder="Cerca..."
+                                    style="width: 140px; padding: 4px; font-size: 12px; height: 26px;">
+                                <select id="add-indicator-select" style="width: 150px;">
+                                    <option value="">Scegli...</option>
+                                    <optgroup id="overlay-group" label="Overlay"></optgroup>
+                                    <optgroup id="subplot-group" label="Subplots"></optgroup>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="control-group">
+                            <label>Template:</label>
+                            <select id="template-select">
+                                <option value="">Carica...</option>
+                            </select>
+                            <button id="save-template-btn" class="secondary"
+                                style="padding: 4px 10px;">Aggiorna</button>
+                            <button id="save-as-template-btn" class="secondary" style="padding: 4px 10px;">Salva
+                                Nuovo</button>
+                            <button id="reset-chart-btn" class="secondary" style="padding: 4px 10px;">Reset</button>
+                            <button id="delete-template-btn"
+                                style="background-color: var(--danger-color); padding: 4px 10px;">Elimina</button>
+                        </div>
+                    </div>
+
+                    <!-- Active Tags -->
+                    <div id="active-indicators" style="display: flex; flex-wrap: wrap; gap: 8px; margin-top: 15px;">
+                    </div>
+                </div>
+
+                <!-- Dynamic Chart Title -->
+                <div id="chart-dynamic-title"
+                    style="margin-bottom: 10px; font-size: 1.2em; font-weight: bold; color: var(--text-color); background: var(--card-bg); padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); display: flex; justify-content: flex-end; align-items: center; gap: 15px;">
+                    <span id="chart-title-main">Select a ticker</span>
+                    <span id="chart-title-variation" style="font-family: monospace;"></span>
+                </div>
+
+                <!-- Drawing Toolbar -->
+                <div class="drawing-toolbar">
+                    <!-- Navigation -->
+                    <button class="drawing-tool-btn" data-tool="cursor" title="Mano – sposta il grafico">✋</button>
+                    <button class="drawing-tool-btn" data-tool="modify"
+                        title="Modifica – sposta gli oggetti sul grafico">✥</button>
+                    <button class="drawing-tool-btn danger" data-tool="eraser"
+                        title="Gomma – click su un oggetto per eliminarlo">🧹</button>
+                    <div class="drawing-toolbar-sep"></div>
+
+                    <!-- Lines -->
+                    <span class="drawing-toolbar-label">Linee</span>
+                    <button class="drawing-tool-btn" data-tool="horizontal_line"
+                        title="Linea Orizzontale (1 click)">─</button>
+                    <button type="button" class="drawing-tool-btn" data-tool="horizontal_line"
+                        title="Linea Orizzontale">⎯</button>
+                    <button type="button" class="drawing-tool-btn" data-tool="vertical_line"
+                        title="Linea Verticale">｜</button>
+                    <button type="button" class="drawing-tool-btn" data-tool="trend_line"
+                        title="Linea di Trend">╱</button>
+                    <button type="button" class="drawing-tool-btn" data-tool="extended_line"
+                        title="Linea Estesa">⟷</button>
+                    <button type="button" class="drawing-tool-btn" data-tool="ray" title="Raggio">↗</button>
+                    <button type="button" class="drawing-tool-btn" data-tool="arrow" title="Freccia">➔</button>
+                    <div class="drawing-toolbar-sep"></div>
+                    <!-- Shapes -->
+                    <span class="drawing-toolbar-label">Forme</span>
+                    <button type="button" class="drawing-tool-btn" data-tool="rectangle" title="Rettangolo">▭</button>
+                    <button type="button" class="drawing-tool-btn" data-tool="circle" title="Cerchio">◯</button>
+                    <button type="button" class="drawing-tool-btn" data-tool="triangle" title="Triangolo">△</button>
+                    <button type="button" class="drawing-tool-btn" data-tool="polyline" title="Polilinee">ᨓ</button>
+                    <button type="button" class="drawing-tool-btn" data-tool="brush" title="Pennello">🖌️</button>
+                    <div class="drawing-toolbar-sep"></div>
+                    <!-- Fibonacci -->
+                    <span class="drawing-toolbar-label">Fibonacci</span>
+                    <button type="button" class="drawing-tool-btn" data-tool="fib_retracement"
+                        title="Ritracciamenti di Fibonacci">≣</button>
+                    <button type="button" class="drawing-tool-btn" data-tool="fib_extension"
+                        title="Estensione di Fibonacci">≣↗</button>
+                    <div class="drawing-toolbar-sep"></div>
+                    <!-- Channels -->
+                    <span class="drawing-toolbar-label">Canali</span>
+                    <button type="button" class="drawing-tool-btn" data-tool="regression_channel"
+                        title="Canale di Regressione">📉</button>
+                    <button type="button" class="drawing-tool-btn" data-tool="price_channel"
+                        title="Canale Parallelo">平行</button>
+                    <div class="drawing-toolbar-sep"></div>
+                    <!-- Annotation -->
+                    <span class="drawing-toolbar-label">Testo</span>
+                    <button type="button" class="drawing-tool-btn" data-tool="text_label" title="Testo">T</button>
+                    <button type="button" class="drawing-tool-btn" data-tool="callout" title="Callout">🗨</button>
+                    <button type="button" class="drawing-tool-btn" data-tool="price_label"
+                        title="Etichetta Prezzo">🏷️</button>
+                    <div class="drawing-toolbar-sep"></div>
+
+                    <!-- Style controls -->
+                    <span class="drawing-toolbar-label">Stile</span>
+                    <input type="color" id="drawing-color-picker" value="#58a6ff" title="Colore disegno"
+                        style="width:32px;height:28px;padding:2px 3px;border-radius:4px;border:1px solid var(--border-color);background:var(--card-bg);cursor:pointer;">
+                    <input type="range" id="drawing-width-slider" min="1" max="6" step="0.5" value="1.5"
+                        title="Spessore linea" style="width:70px;accent-color:var(--accent-color);">
+                    <span id="drawing-width-label" style="font-size:11px;min-width:25px;">1.5px</span>
+                    <div class="drawing-toolbar-sep"></div>
+
+                    <!-- Clear all -->
+                    <button class="drawing-tool-btn danger" id="clear-drawings-btn"
+                        title="Elimina tutti i disegni del ticker">🗑</button>
+                </div>
+
+                <!-- Main Chart and Subplots -->
+                <div id="chart-panes-container" style="display: flex; flex-direction: column; gap: 10px;">
+                    <div class="drawing-canvas-container">
+                        <div id="chart-container"></div>
+                        <canvas id="drawing-layer" class="drawing-layer"></canvas>
+                    </div>
+                </div>
+
+                <!-- Ticker Fundamentals Section -->
+                <div id="ticker-fundamentals-section" class="card hidden" style="margin-top: 20px;">
+                    <div style="display: flex; flex-direction: column; gap: 4px;">
+                        <h3 style="margin-bottom: 0;">Dati Fondamentali: <span
+                                id="fundamental-ticker-fullname">---</span> (<span
+                                id="fundamental-ticker-symbol">---</span>)</h3>
+                        <small id="fundamental-last-updated" style="color: var(--text-secondary);"></small>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 15px;">
+                        <label
+                            style="display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 0.9rem;">
+                            <input type="checkbox" id="update-fundamentals-list-checkbox"> Lista
+                        </label>
+                        <button id="update-fundamentals-btn" class="secondary">Aggiorna Dati Fondamentali</button>
+                    </div>
+                    <div id="fundamentals-container" class="fundamentals-grid">
+                        <!-- Filled by JS -->
+                    </div>
+                    <div id="fundamental-summary"
+                        style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border-color); font-size: 0.9rem; line-height: 1.5; color: var(--text-secondary);">
+                        <!-- Filled by JS -->
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Lists Management View -->
+        <div id="lists-view" class="view-container hidden">
+            <div class="card">
+                <h3>Create New List</h3>
+                <div style="display: flex; gap: 10px;">
+                    <input type="text" id="new-list-name" placeholder="List Name">
+                    <button id="create-list-btn">Create List</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Edit Selected List</h3>
+                <div style="margin-bottom: 20px;">
+                    <p>Add Ticker:</p>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" id="add-ticker-input" placeholder="e.g. AAPL">
+                        <button id="add-ticker-btn">Add Ticker</button>
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 20px; border-top: 1px solid var(--border-color); padding-top: 15px;">
+                    <p>Import from Index (pytickersymbols):</p>
+                    <div style="display: flex; gap: 10px;">
+                        <select id="index-import-select">
+                            <option value="">Select index...</option>
+                        </select>
+                        <button id="import-index-btn">Import</button>
+                    </div>
+                </div>
+
+                <div style="margin-bottom: 20px; border-top: 1px solid var(--border-color); padding-top: 15px;">
+                    <p>Import CSV (Semicolon separated):
+                        <span class="tooltip-container">
+                            <span class="help-icon">?</span>
+                            <span class="tooltip-text">
+                                <strong>Formato richiesto:</strong><br>
+                                - Separatore: <code>;</code> (Punto e virgola)<br>
+                                - Colonna 1: <strong>Ticker Yahoo</strong> (es: AAPL o ENI.MI)<br>
+                                - Colonna 2: Nome (Opzionale)<br><br>
+                                <em>L'importazione è posizionale (Ticker poi Nome). L'intestazione è opzionale.</em>
+                            </span>
+                        </span>
+                    </p>
+                    <div style="display: flex; gap: 10px; align-items: center;">
+                        <input type="file" id="csv-upload-input" accept=".csv">
+                        <button id="upload-csv-btn">Upload CSV</button>
+                    </div>
+                </div>
+
+                <div
+                    style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 15px; display: flex; gap: 10px;">
+                    <button id="export-csv-btn" class="secondary">Export Current List (CSV)</button>
+                    <button id="fetch-missing-names-btn" class="secondary">Cerca Nomi Mancanti</button>
+                    <button id="clear-list-btn" style="background-color: var(--danger-color);">Clear All
+                        Tickers</button>
+                </div>
+
+                <div id="current-list-tickers" style="margin-top: 20px;">
+                    <!-- Tickers will be listed here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Screening View -->
+        <div id="screening-view" class="view-container hidden">
+            <!-- Sheets Navigation -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                <div id="screening-tabs" class="tabs" style="margin-bottom: 0; display: flex; gap: 10px;">
+                    <div class="tab-item active" data-tab="screening-base-sheet">Base</div>
+                    <div class="tab-item" data-tab="screening-roc-sheet">ROC Analysis</div>
+                    <div class="tab-item" data-tab="screening-fundamental-sheet">Fundamentals</div>
+                    <!-- Dynamic tabs will be added here -->
+                </div>
+                <div style="display: flex; gap: 10px;">
+                    <button id="create-sheet-btn" class="secondary" style="padding: 4px 10px;">+ Nuovo Foglio</button>
+                    <button id="delete-sheet-btn"
+                        style="background-color: var(--danger-color); padding: 4px 10px; display: none;">Elimina
+                        Foglio</button>
+                </div>
+            </div>
+
+            <!-- Column Management (Visible only for custom sheets) -->
+            <div id="column-management-card" class="card hidden" style="margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h3>Gestione Colonne: <span id="active-sheet-name">...</span></h3>
+                    <div style="display: flex; gap: 10px;">
+                        <select id="add-column-select" style="padding: 4px;">
+                            <option value="">Aggiungi Indicatore...</option>
+                            <option value="sma">SMA</option>
+                            <option value="ema">EMA</option>
+                            <option value="rsi">RSI</option>
+                            <option value="macd">MACD</option>
+                            <option value="bbands">Bollinger Bands</option>
+                            <option value="cci">CCI</option>
+                            <option value="atr">ATR</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="active-columns" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <!-- Column tags will appear here -->
+                </div>
+            </div>
+
+            <!-- Sheet: Base -->
+            <div id="screening-base-sheet" class="tab-content">
+                <div class="card">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h3>Screener Base: Last Quote & 1-period ROC <span id="base-row-count"
+                                class="row-count-badge"></span></h3>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <button class="save-subuniverse-btn secondary hidden">Salva Lista</button>
+                            <button class="run-screening-btn">Run Screening</button>
+                        </div>
+                    </div>
+                    <table id="screening-base-table">
+                        <thead>
+                            <tr id="screening-base-head">
+                                <th>Ticker</th>
+                                <th>Price</th>
+                                <th>Date</th>
+                                <th>ROC (1)</th>
+                            </tr>
+                        </thead>
+                        <tbody id="screening-base-body">
+                            <!-- Results will appear here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Sheet: Custom (Dynamic) -->
+            <div id="screening-custom-sheet" class="tab-content hidden">
+                <div class="card">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h3>Risultati Screening <span id="dynamic-row-count" class="row-count-badge"></span></h3>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <button class="save-subuniverse-btn secondary hidden">Salva Lista</button>
+                            <button class="run-screening-btn dynamic-run">Esegui Screening</button>
+                        </div>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table id="dynamic-screening-table">
+                            <thead>
+                                <tr id="dynamic-screening-head">
+                                    <!-- Dynamic headers -->
+                                </tr>
+                            </thead>
+                            <tbody id="dynamic-screening-body">
+                                <!-- Results -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+            <!-- Sheet: ROC Analysis -->
+            <div id="screening-roc-sheet" class="tab-content hidden">
+                <div class="card">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h3>ROC Multi-Period Analysis <span id="roc-row-count" class="row-count-badge"></span></h3>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <button class="save-subuniverse-btn secondary hidden">Salva Lista</button>
+                        </div>
+                    </div>
+                    <div style="margin-bottom: 20px;">
+                        <div style="display: flex; gap: 15px; align-items: center; margin-top: 10px; flex-wrap: wrap;">
+                            <div class="control-group">
+                                <label>P1:</label>
+                                <input type="number" id="roc-p1" value="20" style="width: 60px;">
+                            </div>
+                            <div class="control-group">
+                                <label>P2:</label>
+                                <input type="number" id="roc-p2" value="60" style="width: 60px;">
+                            </div>
+                            <div class="control-group">
+                                <label>P3:</label>
+                                <input type="number" id="roc-p3" value="120" style="width: 60px;">
+                            </div>
+                            <div class="control-group">
+                                <label>P4:</label>
+                                <input type="number" id="roc-p4" value="240" style="width: 60px;">
+                            </div>
+                            <button class="run-screening-btn">Run Analysis</button>
+                        </div>
+                    </div>
+                    <table id="roc-analysis-table">
+                        <thead>
+                            <tr class="sort-row" id="screening-roc-head">
+                                <th data-sort="symbol" style="cursor:pointer">Ticker <span class="sort-icon">↕</span></th>
+                                <th data-sort="name" style="cursor:pointer">Nome <span class="sort-icon">↕</span></th>
+                                <th data-sort="roc_1" style="cursor:pointer">ROC (1) <span class="sort-icon">↕</span></th>
+                                <th data-sort="roc_p1" style="cursor:pointer" id="roc-h1">ROC (20) <span class="sort-icon">↕</span></th>
+                                <th data-sort="roc_p2" style="cursor:pointer" id="roc-h2">ROC (60) <span class="sort-icon">↕</span></th>
+                                <th data-sort="roc_p3" style="cursor:pointer" id="roc-h3">ROC (120) <span class="sort-icon">↕</span></th>
+                                <th data-sort="roc_p4" style="cursor:pointer" id="roc-h4">ROC (240) <span class="sort-icon">↕</span></th>
+                            </tr>
+                            <tr class="filter-row">
+                                <th></th>
+                                <th></th>
+                                <th>
+                                    <div class="range-filter">
+                                        <input type="number" step="0.1" placeholder="Min" class="roc-filter-min" data-roc="p0">
+                                        <input type="number" step="0.1" placeholder="Max" class="roc-filter-max" data-roc="p0">
+                                    </div>
+                                </th>
+                                <th>
+                                    <div class="range-filter">
+                                        <input type="number" step="0.1" placeholder="Min" class="roc-filter-min" data-roc="p1">
+                                        <input type="number" step="0.1" placeholder="Max" class="roc-filter-max" data-roc="p1">
+                                    </div>
+                                </th>
+                                <th>
+                                    <div class="range-filter">
+                                        <input type="number" step="0.1" placeholder="Min" class="roc-filter-min" data-roc="p2">
+                                        <input type="number" step="0.1" placeholder="Max" class="roc-filter-max" data-roc="p2">
+                                    </div>
+                                </th>
+                                <th>
+                                    <div class="range-filter">
+                                        <input type="number" step="0.1" placeholder="Min" class="roc-filter-min" data-roc="p3">
+                                        <input type="number" step="0.1" placeholder="Max" class="roc-filter-max" data-roc="p3">
+                                    </div>
+                                </th>
+                                <th>
+                                    <div class="range-filter">
+                                        <input type="number" step="0.1" placeholder="Min" class="roc-filter-min" data-roc="p4">
+                                        <input type="number" step="0.1" placeholder="Max" class="roc-filter-max" data-roc="p4">
+                                    </div>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody id="screening-roc-body">
+                            <!-- Results will appear here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Sheet: Fundamentals -->
+            <div id="screening-fundamental-sheet" class="tab-content hidden">
+                <div class="card">
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                        <h3>Screener Fondamentali <span id="fundamental-row-count" class="row-count-badge"></span></h3>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <button id="run-fundamental-screening-btn">Carica Fondamentali</button>
+                            <button class="save-subuniverse-btn secondary hidden">Salva Lista</button>
+                        </div>
+                    </div>
+                    <div style="overflow-x: auto;">
+                        <table id="fundamental-screening-table">
+                            <thead>
+                                <tr class="sort-row" id="fundamental-sort-row">
+                                    <th data-sort="symbol" style="cursor:pointer; user-select:none;">Ticker <span
+                                            class="sort-icon">↕</span></th>
+                                    <th data-sort="market_cap" style="cursor:pointer; user-select:none;">Market Cap
+                                        <span class="sort-icon">↕</span>
+                                    </th>
+                                    <th data-sort="total_revenue" style="cursor:pointer; user-select:none;">Revenue
+                                        <span class="sort-icon">↕</span>
+                                    </th>
+                                    <th data-sort="pe_ratio" style="cursor:pointer; user-select:none;">P/E <span
+                                            class="sort-icon">↕</span></th>
+                                    <th data-sort="forward_pe" style="cursor:pointer; user-select:none;">Fwd P/E <span
+                                            class="sort-icon">↕</span></th>
+                                    <th data-sort="ps_ratio" style="cursor:pointer; user-select:none;">P/S <span
+                                            class="sort-icon">↕</span></th>
+                                    <th data-sort="pb_ratio" style="cursor:pointer; user-select:none;">P/B <span
+                                            class="sort-icon">↕</span></th>
+                                    <th data-sort="dividend_yield" style="cursor:pointer; user-select:none;">Div. Yield
+                                        <span class="sort-icon">↕</span>
+                                    </th>
+                                    <th data-sort="beta" style="cursor:pointer; user-select:none;">Beta <span
+                                            class="sort-icon">↕</span></th>
+                                    <th data-sort="revenue_growth" style="cursor:pointer; user-select:none;">Rev. Growth
+                                        <span class="sort-icon">↕</span>
+                                    </th>
+                                    <th data-sort="profit_margins" style="cursor:pointer; user-select:none;">Profit
+                                        Margin <span class="sort-icon">↕</span></th>
+                                    <th data-sort="operating_margins" style="cursor:pointer; user-select:none;">Op.
+                                        Margin
+                                        <span class="sort-icon">↕</span>
+                                    </th>
+                                    <th data-sort="total_cash" style="cursor:pointer; user-select:none;">Cash <span
+                                            class="sort-icon">↕</span></th>
+                                    <th data-sort="total_debt" style="cursor:pointer; user-select:none;">Debt <span
+                                            class="sort-icon">↕</span></th>
+                                    <th data-sort="current_ratio" style="cursor:pointer; user-select:none;">Curr. Ratio
+                                        <span class="sort-icon">↕</span>
+                                    </th>
+                                    <th data-sort="sector" style="cursor:pointer; user-select:none;">Settore <span
+                                            class="sort-icon">↕</span></th>
+                                    <th data-sort="industry" style="cursor:pointer; user-select:none;">Industria <span
+                                            class="sort-icon">↕</span></th>
+                                </tr>
+                                <tr class="filter-row">
+                                    <th><input type="text" placeholder="Filtra..." class="fund-filter-text"
+                                            data-field="symbol"></th>
+                                    <th>
+                                        <div class="range-filter">
+                                            <input type="number" placeholder="Min" class="fund-filter-min"
+                                                data-field="market_cap">
+                                            <input type="number" placeholder="Max" class="fund-filter-max"
+                                                data-field="market_cap">
+                                        </div>
+                                    </th>
+                                    <th>
+                                        <div class="range-filter">
+                                            <input type="number" placeholder="Min" class="fund-filter-min"
+                                                data-field="total_revenue">
+                                            <input type="number" placeholder="Max" class="fund-filter-max"
+                                                data-field="total_revenue">
+                                        </div>
+                                    </th>
+                                    <th>
+                                        <div class="range-filter">
+                                            <input type="number" placeholder="Min" class="fund-filter-min"
+                                                data-field="pe_ratio">
+                                            <input type="number" placeholder="Max" class="fund-filter-max"
+                                                data-field="pe_ratio">
+                                        </div>
+                                    </th>
+                                    <th>
+                                        <div class="range-filter">
+                                            <input type="number" placeholder="Min" class="fund-filter-min"
+                                                data-field="forward_pe">
+                                            <input type="number" placeholder="Max" class="fund-filter-max"
+                                                data-field="forward_pe">
+                                        </div>
+                                    </th>
+                                    <th>
+                                        <div class="range-filter">
+                                            <input type="number" placeholder="Min" class="fund-filter-min"
+                                                data-field="ps_ratio">
+                                            <input type="number" placeholder="Max" class="fund-filter-max"
+                                                data-field="ps_ratio">
+                                        </div>
+                                    </th>
+                                    <th>
+                                        <div class="range-filter">
+                                            <input type="number" placeholder="Min" class="fund-filter-min"
+                                                data-field="pb_ratio">
+                                            <input type="number" placeholder="Max" class="fund-filter-max"
+                                                data-field="pb_ratio">
+                                        </div>
+                                    </th>
+                                    <th>
+                                        <div class="range-filter">
+                                            <input type="number" step="0.1" placeholder="Min" class="fund-filter-min"
+                                                data-field="dividend_yield">
+                                            <input type="number" step="0.1" placeholder="Max" class="fund-filter-max"
+                                                data-field="dividend_yield">
+                                        </div>
+                                    </th>
+                                    <th>
+                                        <div class="range-filter">
+                                            <input type="number" step="0.1" placeholder="Min" class="fund-filter-min"
+                                                data-field="beta">
+                                            <input type="number" step="0.1" placeholder="Max" class="fund-filter-max"
+                                                data-field="beta">
+                                        </div>
+                                    </th>
+                                    <th>
+                                        <div class="range-filter">
+                                            <input type="number" step="0.1" placeholder="Min" class="fund-filter-min"
+                                                data-field="revenue_growth">
+                                            <input type="number" step="0.1" placeholder="Max" class="fund-filter-max"
+                                                data-field="revenue_growth">
+                                        </div>
+                                    </th>
+                                    <th>
+                                        <div class="range-filter">
+                                            <input type="number" step="0.1" placeholder="Min" class="fund-filter-min"
+                                                data-field="profit_margins">
+                                            <input type="number" step="0.1" placeholder="Max" class="fund-filter-max"
+                                                data-field="profit_margins">
+                                        </div>
+                                    </th>
+                                    <th>
+                                        <div class="range-filter">
+                                            <input type="number" step="0.1" placeholder="Min" class="fund-filter-min"
+                                                data-field="operating_margins">
+                                            <input type="number" step="0.1" placeholder="Max" class="fund-filter-max"
+                                                data-field="operating_margins">
+                                        </div>
+                                    </th>
+                                    <th>
+                                        <div class="range-filter">
+                                            <input type="number" placeholder="Min" class="fund-filter-min"
+                                                data-field="total_cash">
+                                            <input type="number" placeholder="Max" class="fund-filter-max"
+                                                data-field="total_cash">
+                                        </div>
+                                    </th>
+                                    <th>
+                                        <div class="range-filter">
+                                            <input type="number" placeholder="Min" class="fund-filter-min"
+                                                data-field="total_debt">
+                                            <input type="number" placeholder="Max" class="fund-filter-max"
+                                                data-field="total_debt">
+                                        </div>
+                                    </th>
+                                    <th>
+                                        <div class="range-filter">
+                                            <input type="number" step="0.1" placeholder="Min" class="fund-filter-min"
+                                                data-field="current_ratio">
+                                            <input type="number" step="0.1" placeholder="Max" class="fund-filter-max"
+                                                data-field="current_ratio">
+                                        </div>
+                                    </th>
+                                    <th><input type="text" placeholder="Settore..." class="fund-filter-text"
+                                            data-field="sector"></th>
+                                    <th><input type="text" placeholder="Industria..." class="fund-filter-text"
+                                            data-field="industry"></th>
+                                </tr>
+                            </thead>
+                            <tbody id="fundamental-screening-body">
+                                <!-- Results -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Historical Data View -->
+        <div id="historical-view" class="view-container hidden">
+            <div class="card">
+                <h3>Dati Storici nel Database <span id="historical-range"
+                        style="font-size: 0.9rem; font-weight: normal; margin-left: 10px; color: var(--accent-color);"></span>
+                </h3>
+                <select id="historical-ticker-select">
+                    <option value="">Select ticker...</option>
+                </select>
+            </div>
+            <div
+                style="max-height: 600px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+                <table>
+                    <thead>
+                        <tr>
+                            <th id="sort-date-header" style="cursor: pointer; user-select: none;">Data <span
+                                    id="sort-order-icon">▼</span></th>
+                            <th>Open</th>
+                            <th>High</th>
+                            <th>Low</th>
+                            <th>Close</th>
+                            <th>Adj Close</th>
+                            <th>Volume</th>
+                        </tr>
+                    </thead>
+                    <tbody id="historical-data-body">
+                        <!-- Data will appear here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Maintenance View -->
+        <div id="maintenance-view" class="view-container hidden">
+            <div class="card">
+                <h3>Manutenzione Database</h3>
+
+                <div class="tabs" style="margin-bottom: 20px;">
+                    <div class="tab-item active" data-maintenance-tab="maintenance-orphans">Indicatori Orfani</div>
+                    <div class="tab-item" data-maintenance-tab="maintenance-mappings">Gestione Tickers (Yahoo-Investing)
+                    </div>
+                </div>
+
+                <!-- Tab: Orphans -->
+                <div id="maintenance-orphans" class="maintenance-tab-content">
+                    <p style="color: var(--text-secondary); margin-bottom: 20px;">
+                        Gestisci i dati degli indicatori calcolati nel tempo. Gli indicatori "orfani" sono quelli che
+                        non
+                        sono più presenti in nessun foglio di screening attivo.
+                    </p>
+                    <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+                        <button onclick="loadOrphans()" class="secondary">Aggiorna Lista Orfani</button>
+                        <button id="delete-selected-orphans-btn"
+                            style="background-color: var(--danger-color); display: none;">Elimina Selezionati</button>
+
+                        <div style="width: 1px; height: 30px; background: var(--border-color); margin: 0 10px;"></div>
+
+                        <button id="clear-all-prices-btn" style="background-color: var(--danger-color);">Svuota Tutti i
+                            Prezzi</button>
+                        <button id="vacuum-db-btn" class="secondary">Ottimizza Database (VACUUM)</button>
+                    </div>
+
+                    <div
+                        style="max-height: 600px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+                        <table id="maintenance-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 40px;"><input type="checkbox" id="select-all-orphans"></th>
+                                    <th>Chiave Indicatore</th>
+                                    <th>Record nel DB</th>
+                                    <th>Azioni</th>
+                                </tr>
+                            </thead>
+                            <tbody id="maintenance-body">
+                                <!-- Orphan indicators will appear here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Tab: Ticker Mappings -->
+                <div id="maintenance-mappings" class="maintenance-tab-content" style="display: none;">
+                    <p style="color: var(--text-secondary); margin-bottom: 20px;">
+                        Gestisci l'associazione tra i ticker di Yahoo Finance e quelli di Investing.com per il recupero
+                        dati corretto.
+                    </p>
+                    <div
+                        style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 15px;">
+                        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                            <button id="refresh-mappings-btn" class="secondary">aggiorna</button>
+                            <input type="file" id="import-mapping-csv" accept=".csv" style="display: none;">
+                            <button onclick="document.getElementById('import-mapping-csv').click()" class="secondary">📥
+                                Importa CSV</button>
+                            <button id="export-mapping-csv-btn" class="secondary">📤 Esporta CSV</button>
+
+                            <div style="width: 1px; height: 30px; background: var(--border-color); margin: 0 10px;">
+                            </div>
+
+                            <!-- Manual Add Form -->
+                            <div style="display: flex; gap: 8px; align-items: center;">
+                                <input type="text" id="manual-yahoo-ticker" placeholder="Yahoo Ticker (es. AAPL)"
+                                    style="width: 160px; padding: 6px;">
+                                <input type="text" id="manual-investing-ticker" placeholder="Investing Ticker"
+                                    style="width: 160px; padding: 6px;">
+                                <input type="text" id="manual-mapping-name" placeholder="Nome (opzionale)"
+                                    style="width: 160px; padding: 6px;">
+                                <button id="add-manual-mapping-btn"
+                                    style="background-color: var(--accent-color); padding: 6px 15px;">Aggiungi/Aggiorna</button>
+                            </div>
+                        </div>
+                        <span id="mapping-status" style="font-size: 0.85rem; color: #8b949e;"></span>
+                    </div>
+
+                    <div
+                        style="max-height: 500px; overflow-y: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th onclick="toggleMappingSort('symbol_yahoo')" style="cursor:pointer;">Ticker Yahoo
+                                        <span id="sort-icon-symbol_yahoo"></span>
+                                    </th>
+                                    <th onclick="toggleMappingSort('symbol_investing')" style="cursor:pointer;">Ticker
+                                        Investing <span id="sort-icon-symbol_investing"></span></th>
+                                    <th onclick="toggleMappingSort('name')" style="cursor:pointer;">Nome / Descrizione
+                                        <span id="sort-icon-name"></span>
+                                    </th>
+                                    <th onclick="toggleMappingSort('last_updated')" style="cursor:pointer;">Ultimo
+                                        Aggiornamento <span id="sort-icon-last_updated"></span></th>
+                                    <th>Azioni</th>
+                                </tr>
+                                <tr class="filter-row">
+                                    <th><input type="text" id="filter-mapping-yahoo" placeholder="Filtra..."
+                                            oninput="applyMappingFilters()"
+                                            style="width:100%; padding:4px; font-size:0.8rem;"></th>
+                                    <th><input type="text" id="filter-mapping-investing" placeholder="Filtra..."
+                                            oninput="applyMappingFilters()"
+                                            style="width:100%; padding:4px; font-size:0.8rem;"></th>
+                                    <th><input type="text" id="filter-mapping-name" placeholder="Filtra..."
+                                            oninput="applyMappingFilters()"
+                                            style="width:100%; padding:4px; font-size:0.8rem;"></th>
+                                    <th></th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody id="ticker-mapping-body">
+                                <!-- Mappings will be loaded here -->
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Google Sheet View -->
+        <div id="gsheet-view" class="view-container hidden">
+            <div class="card" style="margin-bottom: 20px;">
+                <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                    <div class="control-group">
+                        <label for="gsheet-name-input">Spreadsheet:</label>
+                        <input type="text" id="gsheet-name-input" value="Investing" style="width: 220px;"
+                            placeholder="Nome del Google Sheet">
+                    </div>
+                    <button id="gsheet-load-btn">📊 Carica Dati</button>
+                    <span id="gsheet-status" style="font-size: 0.85rem; color: #8b949e;"></span>
+                </div>
+            </div>
+
+            <!-- Dynamic tabs for each worksheet -->
+            <div id="gsheet-tabs-bar" class="tabs" style="margin-bottom: 0; display: none;">
+                <!-- Tabs will be generated here -->
+            </div>
+
+            <!-- Tab content panels will be injected here -->
+            <div id="gsheet-sheets-container">
+                <!-- Sheet content will be generated dynamically -->
+            </div>
+        </div>
+
+        <!-- Investing.com View -->
+        <div id="investing-view" class="view-container hidden">
+            <div class="card" style="margin-bottom: 20px;">
+                <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                    <div class="control-group">
+                        <label for="investing-url-select">Lista URL:</label>
+                        <select id="investing-url-select" style="min-width: 150px;">
+                            <option value="">Nuovo URL...</option>
+                        </select>
+                    </div>
+                    <div class="control-group">
+                        <label for="investing-url-input">URL Portfolio:</label>
+                        <input type="text" id="investing-url-input" value="https://it.investing.com/portfolio"
+                            style="width: 350px;" placeholder="Incolla URL del portfolio Investing.com">
+                    </div>
+                    <button id="investing-save-url-btn" class="secondary">💾 Salva Lista URL</button>
+                    <button id="investing-delete-url-btn" class="danger">🗑️ Del Lista URL</button>
+                    <div class="header-divider"></div>
+                    <button id="investing-load-btn">📊 Carica Dati</button>
+                    <button id="investing-load-csv-btn" class="secondary"
+                        style="background-color: var(--secondary-bg); color: var(--text-color); border: 1px solid var(--border-color);">📥
+                        Carica Dati CSV dal web</button>
+                    <button id="investing-load-csv-local-btn" class="secondary"
+                        style="background-color: var(--secondary-bg); color: var(--text-color); border: 1px solid var(--border-color); margin-left: 5px;">📁
+                        Carica Dati CSV dal PC</button>
+                    <span id="investing-status" style="font-size: 0.85rem; color: #8b949e;"></span>
+                </div>
+                <p style="font-size: 0.8rem; color: #8b949e; margin-top: 10px;">⚠️ Chrome deve essere chiuso prima di
+                    cliccare "Carica Dati".</p>
+            </div>
+
+            <div class="card" id="investing-results-card" style="display: none;">
+                <div id="investing-tabs-container" style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button id="investing-tab-prezzo" class="tab-item active"
+                        style="padding: 6px 15px; cursor: pointer; border: none; background: var(--accent-color); color: white; border-radius: 4px;">Prezzo</button>
+                    <button id="investing-tab-tecnica" class="tab-item"
+                        style="padding: 6px 15px; cursor: pointer; border: 1px solid var(--border-color); background: transparent; color: var(--text-color); border-radius: 4px;">Sezione
+                        Tecnica</button>
+                    <!-- Dynamic CSV tabs will be added here -->
+                    <div id="investing-csv-tabs" style="display: flex; gap: 10px;"></div>
+                </div>
+                <div style="overflow-x: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+                    <table id="investing-table">
+                        <thead>
+                            <tr id="investing-table-head"></tr>
+                        </thead>
+                        <tbody id="investing-table-body"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Alarms View -->
+        <div id="alarms-view" class="view-container hidden">
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h3>Gestione Allarmi</h3>
+                    <button id="refresh-alarms-btn" class="secondary">🔄 Aggiorna Lista</button>
+                </div>
+
+                <div style="overflow-x: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+                    <table id="alarms-table">
+                        <thead>
+                            <tr>
+                                <th>Ticker</th>
+                                <th>Tipo Linea</th>
+                                <th>Posizione/Prezzo</th>
+                                <th>Condizione</th>
+                                <th>Stato</th>
+                                <th>Scatto / Prezzo</th>
+                                <th>Azioni</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alarms-body">
+                            <!-- Alarms will be listed here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Indicator Configuration Modal -->
+    <div id="indicator-modal-overlay" class="modal-overlay hidden">
+        <div class="modal-box">
+            <div class="modal-header">
+                <span id="modal-title">Configura Indicatore</span>
+                <button class="modal-close-btn" onclick="closeIndicatorModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <!-- Dynamic params section -->
+                <div id="modal-params-section">
+                    <!-- Filled dynamically by JS -->
+                </div>
+
+                <hr class="modal-divider">
+
+                <!-- Visual settings -->
+                <div class="modal-section-title modal-visual-controls">Aspetto</div>
+
+                <div class="modal-form-row modal-visual-controls">
+                    <label for="modal-color">Colore:</label>
+                    <input type="color" id="modal-color" value="#ff9800">
+                </div>
+
+                <div class="modal-form-row modal-visual-controls">
+                    <label>Stile Linea:</label>
+                    <div class="line-style-options">
+                        <label class="line-style-option">
+                            <input type="radio" name="modal-line-style" value="0" checked>
+                            <span class="line-preview solid"></span>Continua
+                        </label>
+                        <label class="line-style-option">
+                            <input type="radio" name="modal-line-style" value="1">
+                            <span class="line-preview dashed"></span>Tratteggiata
+                        </label>
+                        <label class="line-style-option">
+                            <input type="radio" name="modal-line-style" value="2">
+                            <span class="line-preview dotted"></span>Puntinata
+                        </label>
+                    </div>
+                </div>
+
+                <div class="modal-form-row modal-visual-controls">
+                    <label for="modal-line-width">Spessore:</label>
+                    <div style="display:flex; align-items:center; gap:10px; flex:1">
+                        <input type="range" id="modal-line-width" min="1" max="5" step="0.5" value="1.5"
+                            style="flex:1; accent-color:var(--accent-color)">
+                        <span id="modal-line-width-val" style="min-width:25px; text-align:right">1.5</span>px
+                    </div>
+                </div>
+
+                <div class="modal-form-row modal-visual-controls" style="margin-top: 10px; flex-wrap: wrap; gap: 15px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: normal;">
+                        <input type="checkbox" id="modal-price-line" checked> Linea Orizzontale
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: normal;">
+                        <input type="checkbox" id="modal-last-value" checked> Valore Asse Y
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: normal;">
+                        <input type="checkbox" id="modal-show-legend" checked> Nome in Legenda
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="secondary" onclick="closeIndicatorModal()">Annulla</button>
+                <button id="modal-confirm-btn" onclick="confirmIndicatorModal()">Applica</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Alarm Configuration Modal -->
+    <div id="alarm-modal-overlay" class="modal-overlay hidden">
+        <div class="modal-box" style="max-width: 400px;">
+            <div class="modal-header">
+                <span>Configura Allarme</span>
+                <button class="modal-close-btn" onclick="closeAlarmModal()">×</button>
+            </div>
+            <div class="modal-body">
+                <p id="alarm-modal-info" style="font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 15px;">
+                </p>
+
+                <div class="modal-form-row">
+                    <label>Tipo di Trigger:</label>
+                    <div style="display: flex; flex-direction: column; gap: 8px; flex: 1;">
+                        <label
+                            style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: normal;">
+                            <input type="radio" name="alarm-trigger-type" value="intraday" checked>
+                            Dati Correnti (Intraday)
+                        </label>
+                        <label
+                            style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: normal;">
+                            <input type="radio" name="alarm-trigger-type" value="close">
+                            Chiusura Candela definitivo
+                        </label>
+                    </div>
+                </div>
+
+                <div class="modal-form-row" style="margin-top: 15px;">
+                    <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: normal;">
+                        <input type="checkbox" id="alarm-active-checkbox" checked>
+                        Allarme Attivo
+                    </label>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="secondary" onclick="closeAlarmModal()">Annulla</button>
+                <button id="alarm-confirm-btn">Salva Allarme</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js?v=2"></script>
+</body>
+
+</html>

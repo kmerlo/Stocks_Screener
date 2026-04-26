@@ -1,0 +1,19 @@
+[project]
+name = "stocks-screener"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.129.2",
+    "pandas>=3.0.1",
+    "python-multipart>=0.0.22",
+    "pytickersymbols>=1.17.9",
+    "sqlalchemy>=2.0.46",
+    "uvicorn>=0.41.0",
+    "yfinance>=1.2.0",
+    "pandas-ta-classic>=0.3.59",
+    "gspread>=6.0.0",
+    "scipy>=1.15.0",
+    "selenium>=4.20.0",
+]

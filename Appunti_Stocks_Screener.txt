@@ -1,0 +1,20 @@
+Il bello di uv è che non hai bisogno di attivare manualmente l'ambiente virtuale se usi il comando uv run!
+
+Quando lanci il comando:
+
+    uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+
+uv capisce automaticamente in quale cartella ti trovi, individua la cartella .venv del progetto e avvia Uvicorn direttamente all'interno di quell'ambiente virtuale isolato, facendoti risparmiare un passaggio.
+
+Se invece vuoi comunque attivare l'ambiente (metodo classico)
+Se in futuro volessi attivare l'ambiente per usare comandi python standard senza scriverci davanti uv run (ad esempio lanciare semplicemente uvicorn main:app ... o python script.py), dal terminale di Linux Mint dentro la cartella del progetto ti basterà dare:
+
+    source .venv/bin/activate
+
+Vedrai comparire 
+
+    (.venv)
+
+all'inizio della riga di comando del tuo terminale. A quel punto l'ambiente è attivo. Per disattivarlo quando hai finito, ti basterà digitare deactivate.
+
+
