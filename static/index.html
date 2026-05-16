@@ -163,80 +163,85 @@
                     </div>
                 </div>
 
-                <!-- Dynamic Chart Title -->
-                <div id="chart-dynamic-title"
-                    style="margin-bottom: 10px; font-size: 1.2em; font-weight: bold; color: var(--text-color); background: var(--card-bg); padding: 10px; border-radius: 8px; border: 1px solid var(--border-color); display: flex; justify-content: flex-end; align-items: center; gap: 15px;">
-                    <span id="chart-title-main">Select a ticker</span>
-                    <span id="chart-title-variation" style="font-family: monospace;"></span>
-                </div>
-
                 <!-- Drawing Toolbar -->
                 <div class="drawing-toolbar">
-                    <!-- Navigation -->
-                    <button class="drawing-tool-btn" data-tool="cursor" title="Mano – sposta il grafico">✋</button>
-                    <button class="drawing-tool-btn" data-tool="modify"
-                        title="Modifica – sposta gli oggetti sul grafico">✥</button>
-                    <button class="drawing-tool-btn danger" data-tool="eraser"
-                        title="Gomma – click su un oggetto per eliminarlo">🧹</button>
+                    <!-- Ticker Info (Recuperata dalla riga sopra) -->
+                    <div id="toolbar-ticker-info" class="toolbar-section">
+                        <span id="chart-title-main" style="font-weight: bold; color: var(--accent-color); margin-right: 5px;">Select a ticker</span>
+                        <span id="chart-title-variation" style="font-family: monospace; font-size: 0.9em;"></span>
+                    </div>
                     <div class="drawing-toolbar-sep"></div>
 
-                    <!-- Lines -->
-                    <span class="drawing-toolbar-label">Linee</span>
-                    <button class="drawing-tool-btn" data-tool="horizontal_line"
-                        title="Linea Orizzontale (1 click)">─</button>
-                    <button type="button" class="drawing-tool-btn" data-tool="horizontal_line"
-                        title="Linea Orizzontale">⎯</button>
-                    <button type="button" class="drawing-tool-btn" data-tool="vertical_line"
-                        title="Linea Verticale">｜</button>
-                    <button type="button" class="drawing-tool-btn" data-tool="trend_line"
-                        title="Linea di Trend">╱</button>
-                    <button type="button" class="drawing-tool-btn" data-tool="extended_line"
-                        title="Linea Estesa">⟷</button>
-                    <button type="button" class="drawing-tool-btn" data-tool="ray" title="Raggio">↗</button>
-                    <button type="button" class="drawing-tool-btn" data-tool="arrow" title="Freccia">➔</button>
+                    <!-- Navigation -->
+                    <button class="drawing-tool-btn" data-tool="cursor" title="Mano – sposta il grafico">✋</button>
+                    <button class="drawing-tool-btn" data-tool="modify" title="Modifica – sposta gli oggetti sul grafico">✥</button>
+                    <button class="drawing-tool-btn danger" data-tool="eraser" title="Gomma – click su un oggetto per eliminarlo">🧹</button>
                     <div class="drawing-toolbar-sep"></div>
-                    <!-- Shapes -->
-                    <span class="drawing-toolbar-label">Forme</span>
-                    <button type="button" class="drawing-tool-btn" data-tool="rectangle" title="Rettangolo">▭</button>
-                    <button type="button" class="drawing-tool-btn" data-tool="circle" title="Cerchio">◯</button>
-                    <button type="button" class="drawing-tool-btn" data-tool="triangle" title="Triangolo">△</button>
-                    <button type="button" class="drawing-tool-btn" data-tool="polyline" title="Polilinee">ᨓ</button>
-                    <button type="button" class="drawing-tool-btn" data-tool="brush" title="Pennello">🖌️</button>
-                    <div class="drawing-toolbar-sep"></div>
-                    <!-- Fibonacci -->
-                    <span class="drawing-toolbar-label">Fibonacci</span>
-                    <button type="button" class="drawing-tool-btn" data-tool="fib_retracement"
-                        title="Ritracciamenti di Fibonacci">≣</button>
-                    <button type="button" class="drawing-tool-btn" data-tool="fib_extension"
-                        title="Estensione di Fibonacci">≣↗</button>
-                    <div class="drawing-toolbar-sep"></div>
-                    <!-- Channels -->
-                    <span class="drawing-toolbar-label">Canali</span>
-                    <button type="button" class="drawing-tool-btn" data-tool="regression_channel"
-                        title="Canale di Regressione">📉</button>
-                    <button type="button" class="drawing-tool-btn" data-tool="price_channel"
-                        title="Canale Parallelo">平行</button>
-                    <div class="drawing-toolbar-sep"></div>
-                    <!-- Annotation -->
-                    <span class="drawing-toolbar-label">Testo</span>
-                    <button type="button" class="drawing-tool-btn" data-tool="text_label" title="Testo">T</button>
-                    <button type="button" class="drawing-tool-btn" data-tool="callout" title="Callout">🗨</button>
-                    <button type="button" class="drawing-tool-btn" data-tool="price_label"
-                        title="Etichetta Prezzo">🏷️</button>
+
+                    <!-- Dropdowns for groups -->
+                    <div class="drawing-tool-dropdown-group">
+                        <button type="button" class="drawing-tool-btn dropdown-toggle" title="Strumenti Linee">Linee ▾</button>
+                        <div class="drawing-tool-dropdown-content">
+                            <button type="button" class="drawing-tool-btn" data-tool="horizontal_line" title="Linea Orizzontale">─</button>
+                            <button type="button" class="drawing-tool-btn" data-tool="vertical_line" title="Linea Verticale">｜</button>
+                            <button type="button" class="drawing-tool-btn" data-tool="trend_line" title="Linea di Trend">╱</button>
+                            <button type="button" class="drawing-tool-btn" data-tool="extended_line" title="Linea Estesa">⟷</button>
+                            <button type="button" class="drawing-tool-btn" data-tool="ray" title="Raggio">↗</button>
+                            <button type="button" class="drawing-tool-btn" data-tool="arrow" title="Freccia">➔</button>
+                        </div>
+                    </div>
+
+                    <div class="drawing-tool-dropdown-group">
+                        <button type="button" class="drawing-tool-btn dropdown-toggle" title="Forme Geometriche">Forme ▾</button>
+                        <div class="drawing-tool-dropdown-content">
+                            <button type="button" class="drawing-tool-btn" data-tool="rectangle" title="Rettangolo">▭</button>
+                            <button type="button" class="drawing-tool-btn" data-tool="circle" title="Cerchio">◯</button>
+                            <button type="button" class="drawing-tool-btn" data-tool="triangle" title="Triangolo">△</button>
+                            <button type="button" class="drawing-tool-btn" data-tool="polyline" title="Polilinee">ᨓ</button>
+                            <button type="button" class="drawing-tool-btn" data-tool="brush" title="Pennello">🖌️</button>
+                        </div>
+                    </div>
+
+                    <div class="drawing-tool-dropdown-group">
+                        <button type="button" class="drawing-tool-btn dropdown-toggle" title="Strumenti Fibonacci">Fibo ▾</button>
+                        <div class="drawing-tool-dropdown-content">
+                            <button type="button" class="drawing-tool-btn" data-tool="fib_retracement" title="Ritracciamenti di Fibonacci">≣</button>
+                            <button type="button" class="drawing-tool-btn" data-tool="fib_extension" title="Estensione di Fibonacci">≣↗</button>
+                        </div>
+                    </div>
+
+                    <div class="drawing-tool-dropdown-group">
+                        <button type="button" class="drawing-tool-btn dropdown-toggle" title="Canali">Canali ▾</button>
+                        <div class="drawing-tool-dropdown-content">
+                            <button type="button" class="drawing-tool-btn" data-tool="regression_channel" title="Canale di Regressione">📉</button>
+                            <button type="button" class="drawing-tool-btn" data-tool="price_channel" title="Canale Parallelo">平行</button>
+                        </div>
+                    </div>
+
+                    <div class="drawing-tool-dropdown-group">
+                        <button type="button" class="drawing-tool-btn dropdown-toggle" title="Annotazioni e Testo">Testo ▾</button>
+                        <div class="drawing-tool-dropdown-content">
+                            <button type="button" class="drawing-tool-btn" data-tool="text_label" title="Testo">T</button>
+                            <button type="button" class="drawing-tool-btn" data-tool="callout" title="Callout">🗨</button>
+                            <button type="button" class="drawing-tool-btn" data-tool="price_label" title="Etichetta Prezzo">🏷️</button>
+                        </div>
+                    </div>
+
                     <div class="drawing-toolbar-sep"></div>
 
                     <!-- Style controls -->
-                    <span class="drawing-toolbar-label">Stile</span>
-                    <input type="color" id="drawing-color-picker" value="#58a6ff" title="Colore disegno"
-                        style="width:32px;height:28px;padding:2px 3px;border-radius:4px;border:1px solid var(--border-color);background:var(--card-bg);cursor:pointer;">
-                    <input type="range" id="drawing-width-slider" min="1" max="6" step="0.5" value="1.5"
-                        title="Spessore linea" style="width:70px;accent-color:var(--accent-color);">
-                    <span id="drawing-width-label" style="font-size:11px;min-width:25px;">1.5px</span>
+                    <div class="toolbar-section" style="display:flex; align-items:center; gap:8px;">
+                        <input type="color" id="drawing-color-picker" value="#58a6ff" title="Colore disegno"
+                            style="width:32px;height:28px;padding:2px 3px;border-radius:4px;border:1px solid var(--border-color);background:var(--card-bg);cursor:pointer;">
+                        <input type="range" id="drawing-width-slider" min="1" max="6" step="0.5" value="1.5"
+                            title="Spessore linea" style="width:70px;accent-color:var(--accent-color);">
+                        <span id="drawing-width-label" style="font-size:11px;min-width:25px;">1.5px</span>
+                    </div>
+
                     <div class="drawing-toolbar-sep"></div>
 
                     <!-- Clear all -->
-                    <button class="drawing-tool-btn danger" id="clear-drawings-btn"
-                        title="Elimina tutti i disegni del ticker">🗑</button>
+                    <button type="button" class="drawing-tool-btn danger" id="clear-drawings-btn" title="Elimina tutti i disegni del ticker">🗑</button>
                 </div>
 
                 <!-- Main Chart and Subplots -->
@@ -249,25 +254,33 @@
 
                 <!-- Ticker Fundamentals Section -->
                 <div id="ticker-fundamentals-section" class="card hidden" style="margin-top: 20px;">
-                    <div style="display: flex; flex-direction: column; gap: 4px;">
-                        <h3 style="margin-bottom: 0;">Dati Fondamentali: <span
-                                id="fundamental-ticker-fullname">---</span> (<span
-                                id="fundamental-ticker-symbol">---</span>)</h3>
-                        <small id="fundamental-last-updated" style="color: var(--text-secondary);"></small>
+                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0;">
+                        <div style="display: flex; flex-direction: column; gap: 4px;">
+                            <h3 style="margin-bottom: 0; cursor: pointer;" id="fundamentals-title-clickable">
+                                Dati Fondamentali: <span id="fundamental-ticker-fullname">---</span> 
+                                (<span id="fundamental-ticker-symbol">---</span>)
+                            </h3>
+                            <small id="fundamental-last-updated" style="color: var(--text-secondary);"></small>
+                        </div>
+                        <button id="toggle-fundamentals-btn" class="fundamentals-toggle-btn" title="Espandi/Contrai Dati Fondamentali">
+                            <span id="fundamentals-toggle-icon">▼</span>
+                        </button>
                     </div>
-                    <div style="display: flex; align-items: center; gap: 15px;">
-                        <label
-                            style="display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 0.9rem;">
-                            <input type="checkbox" id="update-fundamentals-list-checkbox"> Lista
-                        </label>
-                        <button id="update-fundamentals-btn" class="secondary">Aggiorna Dati Fondamentali</button>
-                    </div>
-                    <div id="fundamentals-container" class="fundamentals-grid">
-                        <!-- Filled by JS -->
-                    </div>
-                    <div id="fundamental-summary"
-                        style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border-color); font-size: 0.9rem; line-height: 1.5; color: var(--text-secondary);">
-                        <!-- Filled by JS -->
+
+                    <div id="fundamentals-collapsible-content" class="collapsible-content" style="margin-top: 15px;">
+                        <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
+                            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 0.9rem;">
+                                <input type="checkbox" id="update-fundamentals-list-checkbox"> Lista
+                            </label>
+                            <button id="update-fundamentals-btn" class="secondary">Aggiorna Dati Fondamentali</button>
+                        </div>
+                        <div id="fundamentals-container" class="fundamentals-grid">
+                            <!-- Filled by JS -->
+                        </div>
+                        <div id="fundamental-summary"
+                            style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border-color); font-size: 0.9rem; line-height: 1.5; color: var(--text-secondary);">
+                            <!-- Filled by JS -->
+                        </div>
                     </div>
                 </div>
             </div>

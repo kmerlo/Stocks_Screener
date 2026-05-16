@@ -188,6 +188,8 @@ header {
     flex: 1;
     padding: 20px;
     overflow-y: auto;
+    display: flex;
+    flex-direction: column;
 }
 
 .hidden {
@@ -260,10 +262,44 @@ select {
 
 #chart-container {
     width: 100%;
-    height: 600px;
+    height: 600px; /* Default height, will be overridden if parent is flex */
     position: relative;
     overflow: hidden;
     border-radius: 8px;
+    flex: 1; /* Allow it to grow */
+}
+
+.fundamentals-toggle-btn {
+    background: none;
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-size: 1.2rem;
+}
+
+.fundamentals-toggle-btn:hover {
+    background: var(--border-color);
+    color: var(--accent-color);
+}
+
+.fundamentals-toggle-btn.collapsed i {
+    transform: rotate(-90deg);
+}
+
+#ticker-fundamentals-section {
+    transition: margin-top 0.3s ease;
+}
+
+#ticker-fundamentals-section.collapsed {
+    padding-bottom: 10px;
+    margin-top: 10px;
 }
 
 .drawing-layer {
@@ -709,7 +745,7 @@ th {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
-    padding: 10px;
+    padding: 8px 12px;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid var(--border-color);
     border-radius: 8px;
@@ -760,14 +796,47 @@ th {
     flex-shrink: 0;
 }
 
-.drawing-toolbar-label {
-    font-size: 9px;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    color: #8b949e;
-    font-weight: 700;
-    user-select: none;
+.toolbar-section {
+    display: flex;
+    align-items: center;
     white-space: nowrap;
+}
+
+/* Dropdown Tool Group */
+.drawing-tool-dropdown-group {
+    position: relative;
+    display: inline-block;
+}
+
+.dropdown-toggle {
+    min-width: 80px !important;
+    font-size: 12px !important;
+}
+
+.drawing-tool-dropdown-content {
+    display: none !important; /* Hidden by default */
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    background-color: #1c2128;
+    min-width: 140px;
+    box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.5);
+    z-index: 2100;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 8px;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+}
+
+.drawing-tool-dropdown-group.active .drawing-tool-dropdown-content {
+    display: grid !important; /* Show when active */
+}
+
+.drawing-tool-dropdown-content .drawing-tool-btn {
+    min-width: 32px;
+    height: 32px;
+    padding: 4px;
 }
 
 .drawing-canvas-container {

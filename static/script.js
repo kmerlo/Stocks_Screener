@@ -1871,14 +1871,47 @@ function setupDrawingToolbar() {
     if (isDrawingToolbarInitialized) return;
     console.log("[script.js] setupDrawingToolbar() started");
     const btns = document.querySelectorAll('.drawing-tool-btn[data-tool]');
-    console.log("[script.js] setupDrawingToolbar: Found", btns.length, "buttons");
     btns.forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', (e) => {
             const tool = btn.dataset.tool;
             console.log("[script.js] Toolbar button clicked! data-tool:", tool);
             setDrawingTool(tool);
+
+            // Close dropdown if this button was inside one
+            const dropdown = btn.closest('.dropdown-tool-group');
+            if (dropdown) {
+                dropdown.classList.remove('active');
+                // Optional: update dropdown toggle text/icon to show last used tool?
+                // For now just closing is enough to recover space
+            }
         });
     });
+
+    // Dropdown logic
+    const dropdowns = document.querySelectorAll('.drawing-tool-dropdown-group');
+    dropdowns.forEach(dd => {
+        const toggle = dd.querySelector('.dropdown-toggle');
+        if (toggle) {
+            toggle.addEventListener('click', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                const isActive = dd.classList.contains('active');
+                // Close all other dropdowns
+                dropdowns.forEach(other => {
+                    if (other !== dd) other.classList.remove('active');
+                });
+                dd.classList.toggle('active');
+            });
+        }
+    });
+
+    // Close dropdowns on click outside
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.dropdown-tool-group')) {
+            dropdowns.forEach(dd => dd.classList.remove('active'));
+        }
+    });
+
     isDrawingToolbarInitialized = true;
     const colorPicker = document.getElementById('drawing-color-picker');
     if (colorPicker) {
@@ -4570,12 +4603,33 @@ function resizeAllCharts() {
     if (!mainChart) return;
     const container = document.getElementById('chart-panes-container');
     if (!container) return;
+    
     const width = container.clientWidth;
-    const mh = parseInt(document.getElementById('main-height-input')?.value || '400');
+    let mh = parseInt(document.getElementById('main-height-input')?.value || '400');
     const sh = parseInt(document.getElementById('sub-height-input')?.value || '100');
+
+    // If fundamentals are hidden or collapsed, and we want to expand, 
+    // we can calculate the available height. 
+    // For now, let's just use the input value but allow it to be flexible.
+    const section = document.getElementById('ticker-fundamentals-section');
+    const content = document.getElementById('fundamentals-collapsible-content');
+    
+    if (section && (section.classList.contains('hidden') || content?.classList.contains('hidden'))) {
+        // When collapsed, we might want to increase the height automatically if it's too small
+        const viewContainer = document.getElementById('monitoring-view');
+        if (viewContainer) {
+            const availableHeight = viewContainer.clientHeight - 150; // Leave space for toolbar and padding
+            if (availableHeight > mh) {
+                // Only auto-expand if available space is greater than user setting
+                mh = availableHeight - (secondaryCharts.length * (sh + 10));
+            }
+        }
+    }
+
     const mainChartContainer = document.getElementById('chart-container');
     if (mainChartContainer) mainChartContainer.style.height = `${mh}px`;
     mainChart.resize(width, mh);
+    
     secondaryCharts.forEach(sc => {
         sc.container.style.height = `${sh}px`;
         sc.chart.resize(width, sh);
@@ -4583,8 +4637,54 @@ function resizeAllCharts() {
     resizeDrawingCanvas();
 }
 
+function setupFundamentalsToggle() {
+    const btn = document.getElementById('toggle-fundamentals-btn');
+    const title = document.getElementById('fundamentals-title-clickable');
+    const content = document.getElementById('fundamentals-collapsible-content');
+    const section = document.getElementById('ticker-fundamentals-section');
+    const icon = document.getElementById('fundamentals-toggle-icon');
+    
+    if (!btn || !content || !section) return;
+    
+    const performToggle = () => {
+        const isCurrentlyHidden = content.classList.contains('hidden');
+        if (isCurrentlyHidden) {
+            content.classList.remove('hidden');
+            section.classList.remove('collapsed');
+            icon.textContent = '▼';
+            localStorage.setItem('fundamentals_collapsed', 'false');
+        } else {
+            content.classList.add('hidden');
+            section.classList.add('collapsed');
+            icon.textContent = '▶';
+            localStorage.setItem('fundamentals_collapsed', 'true');
+        }
+        
+        // Resize after animation
+        setTimeout(resizeAllCharts, 350);
+    };
+    
+    btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        performToggle();
+    });
+    
+    if (title) {
+        title.addEventListener('click', performToggle);
+    }
+    
+    // Initial state from localStorage
+    const savedState = localStorage.getItem('fundamentals_collapsed');
+    if (savedState === 'true') {
+        content.classList.add('hidden');
+        section.classList.add('collapsed');
+        icon.textContent = '▶';
+    }
+}
+
 // --- INITIALIZATION ---
 function initApp() {
+    setupFundamentalsToggle();
     initChart();
     if (mainChart) normalizeChart(mainChart);
     initDrawingTools();

@@ -49,7 +49,9 @@ class FinanceLogic:
         last_entry = db.query(DBPriceData).filter(DBPriceData.symbol == symbol).order_by(DBPriceData.date.desc()).first()
         
         if last_entry:
-            # Calculate start_date from last entry (use date() to ensure we get y-m-d)
+            # Use the date of the last entry as start date (inclusive) to re-fetch that day's data.
+            # This ensures that if the previous update occurred before market close, the full day's candle
+            # (including the correct closing price) will be retrieved and will overwrite the incomplete record.
             start_date = last_entry.date.date()
             print(f"DEBUG: Performing incremental update for {symbol} starting from {start_date} (Last DB entry: {last_entry.date.date()})")
             print(f"DEBUG: yf.download(symbol='{symbol}', start='{start_date}', auto_adjust=False, repair=True)")
