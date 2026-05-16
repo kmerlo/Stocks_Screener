@@ -3196,6 +3196,9 @@ document.querySelectorAll('.nav-item').forEach(item => {
         if (view === 'alarms') {
             renderAlarmsView();
         }
+        if (view === 'portfolio') {
+            initPortfolioView();
+        }
     });
 });
 
@@ -6580,4 +6583,387 @@ function goToTicker(symbol) {
 
     updateChart(symbol);
 }
+
+// === Portfolio Tracking Logic ===
+
+let activePortfolioId = null;
+let commissionPlans = [];
+
+async function initPortfolioView() {
+    await loadPortfolios();
+    await loadCommissionPlans();
+}
+
+async function loadPortfolios() {
+    try {
+        const response = await fetch('/portfolios/');
+        const portfolios = await response.json();
+        const select = document.getElementById('portfolio-select');
+        const currentVal = select.value;
+        select.innerHTML = '<option value="">Seleziona Portafoglio...</option>';
+        portfolios.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = `${p.name} (${p.base_currency})`;
+            select.appendChild(opt);
+        });
+        if (currentVal) select.value = currentVal;
+    } catch (err) {
+        console.error("Error loading portfolios:", err);
+    }
+}
+
+async function loadCommissionPlans() {
+    try {
+        const response = await fetch('/commission_plans/');
+        commissionPlans = await response.json();
+        renderCommissionPlansTable();
+        
+        // Update transaction modal dropdown
+        const transSelect = document.getElementById('trans-commission-plan');
+        transSelect.innerHTML = '<option value="">Nessuno (0.00)</option>';
+        commissionPlans.forEach(plan => {
+            const opt = document.createElement('option');
+            opt.value = plan.id;
+            const details = plan.type === 'absolute' ? `${plan.fixed_fee} ${plan.currency}` : `${plan.percentage}% (min ${plan.min_fee}, max ${plan.max_fee})`;
+            opt.textContent = `${plan.name} [${details}]`;
+            transSelect.appendChild(opt);
+        });
+    } catch (err) {
+        console.error("Error loading commission plans:", err);
+    }
+}
+
+function renderCommissionPlansTable() {
+    const tbody = document.getElementById('commission-plans-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    commissionPlans.forEach(plan => {
+        const tr = document.createElement('tr');
+        const details = plan.type === 'absolute' ? 
+            `${plan.fixed_fee} ${plan.currency}` : 
+            `${plan.percentage}% (min ${plan.min_fee}, max ${plan.max_fee}) ${plan.currency}`;
+        
+        tr.innerHTML = `
+            <td style="padding: 5px;">${plan.name}</td>
+            <td style="padding: 5px;">${plan.type}</td>
+            <td style="padding: 5px; text-align: right;">${details}</td>
+            <td style="padding: 5px; text-align: center;">
+                <button class="header-btn danger small" onclick="deleteCommissionPlan(${plan.id})">Elimina</button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+async function deleteCommissionPlan(id) {
+    if (!confirm("Sei sicuro di voler eliminare questo piano commissionale?")) return;
+    try {
+        await fetch(`/commission_plans/${id}`, { method: 'DELETE' });
+        loadCommissionPlans();
+    } catch (err) {
+        alert("Errore nell'eliminazione: " + err.message);
+    }
+}
+
+// Event Listeners for Portfolio Select
+if (document.getElementById('portfolio-select')) {
+    document.getElementById('portfolio-select').addEventListener('change', (e) => {
+        activePortfolioId = e.target.value;
+        if (activePortfolioId) {
+            document.getElementById('portfolio-summary-dashboard').style.display = 'grid';
+            document.getElementById('portfolio-actions').style.display = 'flex';
+            document.getElementById('portfolio-positions-container').style.display = 'block';
+            document.getElementById('portfolio-history-container').style.display = 'block';
+            refreshPortfolio();
+        } else {
+            document.getElementById('portfolio-summary-dashboard').style.display = 'none';
+            document.getElementById('portfolio-actions').style.display = 'none';
+            document.getElementById('portfolio-positions-container').style.display = 'none';
+            document.getElementById('portfolio-history-container').style.display = 'none';
+        }
+    });
+}
+
+async function refreshPortfolio() {
+    if (!activePortfolioId) return;
+    try {
+        const response = await fetch(`/portfolios/${activePortfolioId}/summary`);
+        const data = await response.json();
+        renderPortfolioSummary(data);
+        loadTransactionsHistory();
+    } catch (err) {
+        console.error("Error refreshing portfolio:", err);
+    }
+}
+
+function renderPortfolioSummary(data) {
+    const summary = data.summary;
+    const portfolio = data.portfolio;
+    const curr = portfolio.base_currency;
+
+    document.getElementById('portfolio-cash-display').textContent = `${portfolio.cash_balance.toFixed(2)} ${curr}`;
+    document.getElementById('portfolio-value-display').textContent = `${summary.total_current_value.toFixed(2)} ${curr}`;
+    document.getElementById('portfolio-net-display').textContent = `${summary.net_liquidity.toFixed(2)} ${curr}`;
+    
+    const unPnl = summary.total_unrealized_pl;
+    const unEl = document.getElementById('portfolio-unrealized-display');
+    unEl.textContent = `${unPnl.toFixed(2)} ${curr}`;
+    unEl.style.color = unPnl >= 0 ? 'var(--up-color)' : 'var(--down-color)';
+
+    const rePnl = summary.total_realized_pl;
+    const reEl = document.getElementById('portfolio-realized-display');
+    reEl.textContent = `${rePnl.toFixed(2)} ${curr}`;
+    reEl.style.color = rePnl >= 0 ? 'var(--up-color)' : 'var(--down-color)';
+
+    // Positions Table
+    const tbody = document.getElementById('portfolio-positions-body');
+    tbody.innerHTML = '';
+    data.positions.forEach(pos => {
+        const tr = document.createElement('tr');
+        tr.style.cursor = 'pointer';
+        tr.onclick = () => goToTicker(pos.ticker);
+        
+        const pnl = pos.unrealized_pl;
+        const pnlColor = pnl >= 0 ? 'var(--up-color)' : 'var(--down-color)';
+        
+        tr.innerHTML = `
+            <td><strong>${pos.ticker}</strong></td>
+            <td>${pos.quantity.toFixed(4)}</td>
+            <td>${pos.pmc.toFixed(2)}</td>
+            <td>${pos.current_price.toFixed(2)}</td>
+            <td>${pos.current_value.toFixed(2)} ${curr}</td>
+            <td style="color: ${pnlColor}; font-weight: bold;">${pnl.toFixed(2)} ${curr}</td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+async function loadTransactionsHistory() {
+    if (!activePortfolioId) return;
+    try {
+        const response = await fetch(`/portfolios/${activePortfolioId}/transactions/`);
+        const transactions = await response.json();
+        const tbody = document.getElementById('portfolio-history-body');
+        tbody.innerHTML = '';
+        transactions.forEach(t => {
+            const tr = document.createElement('tr');
+            const date = new Date(t.date).toLocaleString();
+            tr.innerHTML = `
+                <td>${date}</td>
+                <td>${t.ticker || '-'}</td>
+                <td><span class="badge" style="background: ${getTransTypeColor(t.type)}; border-radius: 4px; padding: 2px 6px; font-size: 0.75rem;">${t.type}</span></td>
+                <td>${t.quantity.toFixed(4)}</td>
+                <td>${t.price.toFixed(2)}</td>
+                <td>${t.instrument_currency}</td>
+                <td>${t.exchange_rate.toFixed(4)}</td>
+                <td>${t.commission_paid.toFixed(2)}</td>
+                <td>
+                    <button class="header-btn danger small" onclick="deleteTransaction(${t.id})">Del</button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    } catch (err) {
+        console.error("Error loading transactions:", err);
+    }
+}
+
+function getTransTypeColor(type) {
+    switch (type) {
+        case 'BUY': return 'var(--up-color)';
+        case 'SELL': return 'var(--down-color)';
+        case 'SHORT': return '#ffa726';
+        case 'COVER': return '#66bb6a';
+        case 'DEPOSIT': return 'var(--accent-color)';
+        case 'WITHDRAWAL': return '#78909c';
+        default: return '#888';
+    }
+}
+
+async function deleteTransaction(id) {
+    if (!confirm("Sei sicuro di voler eliminare questa transazione? Il saldo cash verrà ripristinato.")) return;
+    try {
+        await fetch(`/transactions/${id}`, { method: 'DELETE' });
+        refreshPortfolio();
+    } catch (err) {
+        alert("Errore nell'eliminazione: " + err.message);
+    }
+}
+
+// Modal Toggle Handlers
+if (document.getElementById('create-portfolio-btn')) {
+    document.getElementById('create-portfolio-btn').onclick = () => {
+        document.getElementById('create-portfolio-modal').classList.remove('hidden');
+    };
+}
+
+if (document.getElementById('manage-commission-plans-btn')) {
+    document.getElementById('manage-commission-plans-btn').onclick = () => {
+        document.getElementById('commission-plans-modal').classList.remove('hidden');
+    };
+}
+
+if (document.getElementById('add-transaction-btn')) {
+    document.getElementById('add-transaction-btn').onclick = () => {
+        const modal = document.getElementById('transaction-modal');
+        modal.classList.remove('hidden');
+        // Set default date to now
+        const now = new Date();
+        now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+        document.getElementById('trans-date').value = now.toISOString().slice(0, 16);
+        // If we have an active ticker on chart, prefill it
+        if (activeTicker) document.getElementById('trans-ticker').value = activeTicker;
+    };
+}
+
+if (document.getElementById('add-cash-btn')) {
+    document.getElementById('add-cash-btn').onclick = () => {
+        const modal = document.getElementById('cash-modal');
+        modal.classList.remove('hidden');
+        const now = new Date();
+        now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+        document.getElementById('cash-date').value = now.toISOString().slice(0, 16);
+    };
+}
+
+// Form Submission Handlers
+if (document.getElementById('save-new-portfolio-btn')) {
+    document.getElementById('save-new-portfolio-btn').onclick = async () => {
+        const name = document.getElementById('new-portfolio-name').value;
+        const currency = document.getElementById('new-portfolio-currency').value;
+        if (!name) return alert("Inserisci un nome");
+        
+        try {
+            const response = await fetch('/portfolios/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, base_currency: currency, cash_balance: 0 })
+            });
+            if (response.ok) {
+                document.getElementById('create-portfolio-modal').classList.add('hidden');
+                loadPortfolios();
+            }
+        } catch (err) {
+            alert("Errore nel salvataggio: " + err.message);
+        }
+    };
+}
+
+if (document.getElementById('add-commission-plan-btn')) {
+    document.getElementById('add-commission-plan-btn').onclick = async () => {
+        const name = document.getElementById('comm-name').value;
+        const type = document.getElementById('comm-type').value;
+        const fixed_fee = parseFloat(document.getElementById('comm-fixed').value) || 0;
+        const percentage = parseFloat(document.getElementById('comm-perc').value) || 0;
+        const min_fee = parseFloat(document.getElementById('comm-min').value) || 0;
+        const max_fee = parseFloat(document.getElementById('comm-max').value) || 0;
+        
+        if (!name) return alert("Inserisci un nome per il piano");
+
+        try {
+            const response = await fetch('/commission_plans/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, type, fixed_fee, percentage, min_fee, max_fee, currency: 'BASE' })
+            });
+            if (response.ok) {
+                loadCommissionPlans();
+                // Clear inputs
+                document.getElementById('comm-name').value = '';
+                document.getElementById('comm-fixed').value = '';
+                document.getElementById('comm-perc').value = '';
+                document.getElementById('comm-min').value = '';
+                document.getElementById('comm-max').value = '';
+            }
+        } catch (err) {
+            alert("Errore nel salvataggio: " + err.message);
+        }
+    };
+}
+
+if (document.getElementById('comm-type')) {
+    document.getElementById('comm-type').onchange = (e) => {
+        const isPerc = e.target.value === 'percentage';
+        document.getElementById('comm-perc').style.display = isPerc ? 'block' : 'none';
+        document.getElementById('comm-min').style.display = isPerc ? 'block' : 'none';
+        document.getElementById('comm-max').style.display = isPerc ? 'block' : 'none';
+    };
+}
+
+if (document.getElementById('save-transaction-btn')) {
+    document.getElementById('save-transaction-btn').onclick = async () => {
+        if (!activePortfolioId) return;
+        
+        const ticker = document.getElementById('trans-ticker').value.toUpperCase();
+        const type = document.getElementById('trans-type').value;
+        const date = document.getElementById('trans-date').value;
+        const quantity = parseFloat(document.getElementById('trans-qty').value);
+        const price = parseFloat(document.getElementById('trans-price').value);
+        const instrument_currency = document.getElementById('trans-currency').value;
+        const exchange_rate = parseFloat(document.getElementById('trans-fx').value) || 1.0;
+        const commission_plan_id = document.getElementById('trans-commission-plan').value || null;
+        const short_borrow_fee_rate = parseFloat(document.getElementById('trans-short-fee').value) || 0;
+
+        if (!ticker || isNaN(quantity) || isNaN(price)) return alert("Compila tutti i campi obbligatori");
+
+        try {
+            const response = await fetch(`/portfolios/${activePortfolioId}/transactions/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ticker, type, date, quantity, price, 
+                    instrument_currency, exchange_rate, 
+                    commission_plan_id: commission_plan_id ? parseInt(commission_plan_id) : null,
+                    short_borrow_fee_rate
+                })
+            });
+            if (response.ok) {
+                document.getElementById('transaction-modal').classList.add('hidden');
+                refreshPortfolio();
+            } else {
+                const err = await response.json();
+                alert("Errore: " + JSON.stringify(err.detail));
+            }
+        } catch (err) {
+            alert("Errore nella richiesta: " + err.message);
+        }
+    };
+}
+
+if (document.getElementById('trans-type')) {
+    document.getElementById('trans-type').onchange = (e) => {
+        document.getElementById('trans-short-fee-row').style.display = e.target.value === 'SHORT' ? 'flex' : 'none';
+    };
+}
+
+if (document.getElementById('save-cash-btn')) {
+    document.getElementById('save-cash-btn').onclick = async () => {
+        if (!activePortfolioId) return;
+        
+        const type = document.getElementById('cash-type').value;
+        const amount = parseFloat(document.getElementById('cash-amount').value);
+        const date = document.getElementById('cash-date').value;
+
+        if (isNaN(amount)) return alert("Inserisci un importo");
+
+        try {
+            const response = await fetch(`/portfolios/${activePortfolioId}/transactions/`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ticker: null, type, date, quantity: amount, price: 1.0, 
+                    instrument_currency: 'BASE', exchange_rate: 1.0
+                })
+            });
+            if (response.ok) {
+                document.getElementById('cash-modal').classList.add('hidden');
+                refreshPortfolio();
+            }
+        } catch (err) {
+            alert("Errore: " + err.message);
+        }
+    };
+}
+
 console.log("[script.js] Script execution reached end.");

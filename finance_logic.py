@@ -992,8 +992,133 @@ class FinanceLogic:
                     results.append(fund)
         return results
 
-    def get_fundamental_data(self, db: Session, symbol: str):
-        """Retrieves stored fundamental data for a symbol."""
-        return db.query(FundamentalData).filter(FundamentalData.symbol == symbol).first()
+    def get_fx_rate(self, base: str, quote: str):
+        """Fetches current exchange rate from yfinance (base -> quote)."""
+        if base == quote:
+            return 1.0
+        # Yahoo Finance format is BASEQUOTE=X
+        ticker_sym = f"{base}{quote}=X"
+        try:
+            ticker = yf.Ticker(ticker_sym)
+            data = ticker.history(period="1d")
+            if not data.empty:
+                return float(data['Close'].iloc[-1])
+            return 1.0
+        except Exception as e:
+            print(f"Error fetching FX rate {ticker_sym}: {e}")
+            return 1.0
+
+    def get_portfolio_summary(self, db: Session, portfolio_id: int):
+        from database import Portfolio, Transaction, PriceData
+        from fastapi import HTTPException
+
+        portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
+        if not portfolio:
+            raise HTTPException(status_code=404, detail="Portfolio not found")
+
+        transactions = db.query(Transaction).filter(Transaction.portfolio_id == portfolio_id).order_by(Transaction.date.asc()).all()
+
+        positions = {}
+        for t in transactions:
+            if t.type in ["DEPOSIT", "WITHDRAWAL"]:
+                continue
+                
+            sym = t.ticker
+            if sym not in positions:
+                positions[sym] = {
+                    "ticker": sym,
+                    "quantity": 0.0,
+                    "pmc": 0.0,
+                    "total_invested": 0.0,
+                    "realized_pl": 0.0,
+                    "short_costs": 0.0,
+                    "currency": t.instrument_currency
+                }
+            
+            p = positions[sym]
+            trade_qty = t.quantity
+            trade_price = t.price * t.exchange_rate  # Convert to base currency
+            
+            if t.type == "BUY":
+                new_qty = p["quantity"] + trade_qty
+                if p["quantity"] >= 0:
+                    p["total_invested"] += (trade_price * trade_qty)
+                    p["pmc"] = p["total_invested"] / new_qty if new_qty > 0 else 0
+                p["quantity"] = new_qty
+            
+            elif t.type == "SELL":
+                if p["quantity"] > 0:
+                    realized = (trade_price - p["pmc"]) * trade_qty
+                    p["realized_pl"] += realized
+                    p["total_invested"] -= (p["pmc"] * trade_qty)
+                p["quantity"] -= trade_qty
+                
+            elif t.type == "SHORT":
+                new_qty = p["quantity"] - trade_qty
+                if p["quantity"] <= 0:
+                    p["total_invested"] += (trade_price * trade_qty)
+                    p["pmc"] = p["total_invested"] / abs(new_qty) if new_qty < 0 else 0
+                p["quantity"] = new_qty
+                
+            elif t.type == "COVER":
+                if p["quantity"] < 0:
+                    realized = (p["pmc"] - trade_price) * trade_qty
+                    p["realized_pl"] += realized
+                    p["total_invested"] -= (p["pmc"] * trade_qty)
+                p["quantity"] += trade_qty
+
+        active_positions = []
+        total_invested = 0.0
+        total_current_value = 0.0
+        unrealized_pl = 0.0
+        
+        # Cache for FX rates to avoid multiple calls for the same currency pair
+        fx_cache = {}
+
+        for sym, p in positions.items():
+            if abs(p["quantity"]) > 0.0001:
+                latest_price_obj = db.query(PriceData).filter(PriceData.symbol == sym).order_by(PriceData.date.desc()).first()
+                
+                # Fetch current FX rate for the instrument currency to base currency
+                fx_pair = (p["currency"], portfolio.base_currency)
+                if fx_pair not in fx_cache:
+                    fx_cache[fx_pair] = self.get_fx_rate(fx_pair[0], fx_pair[1])
+                latest_fx = fx_cache[fx_pair]
+
+                latest_price = latest_price_obj.close if latest_price_obj else p["pmc"] / latest_fx if latest_fx else 0.0
+                
+                current_val_base = (latest_price * p["quantity"]) * latest_fx
+                
+                if p["quantity"] > 0:
+                    unreal = (latest_price * latest_fx - p["pmc"]) * p["quantity"]
+                else:
+                    unreal = (p["pmc"] - latest_price * latest_fx) * abs(p["quantity"])
+
+                p["current_price"] = latest_price
+                p["current_value"] = current_val_base
+                p["unrealized_pl"] = unreal
+                
+                total_invested += p["total_invested"]
+                total_current_value += current_val_base
+                unrealized_pl += unreal
+                
+                active_positions.append(p)
+
+        return {
+            "portfolio": {
+                "id": portfolio.id,
+                "name": portfolio.name,
+                "base_currency": portfolio.base_currency,
+                "cash_balance": portfolio.cash_balance
+            },
+            "summary": {
+                "total_invested": total_invested,
+                "total_current_value": total_current_value,
+                "total_unrealized_pl": unrealized_pl,
+                "total_realized_pl": sum(p["realized_pl"] for p in positions.values()),
+                "net_liquidity": portfolio.cash_balance + total_current_value
+            },
+            "positions": active_positions
+        }
 
 finance_logic = FinanceLogic()

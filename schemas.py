@@ -294,3 +294,60 @@ class PortfolioURL(PortfolioURLBase):
 
     class Config:
         from_attributes = True
+
+# --- Portfolio Tracking Schemas ---
+
+class CommissionPlanBase(BaseModel):
+    name: str
+    type: str  # 'absolute' or 'percentage'
+    fixed_fee: float = 0.0
+    percentage: float = 0.0
+    min_fee: float = 0.0
+    max_fee: Optional[float] = None
+    currency: str = "EUR"
+
+class CommissionPlanCreate(CommissionPlanBase):
+    pass
+
+class CommissionPlan(CommissionPlanBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+class TransactionBase(BaseModel):
+    portfolio_id: int
+    ticker: str
+    type: str
+    date: datetime
+    quantity: float
+    price: float
+    instrument_currency: str = "EUR"
+    exchange_rate: float = 1.0
+    commission_plan_id: Optional[int] = None
+    commission_paid: float = 0.0
+    short_borrow_fee_rate: float = 0.0
+
+class TransactionCreate(TransactionBase):
+    pass
+
+class Transaction(TransactionBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+class PortfolioBase(BaseModel):
+    name: str
+    base_currency: str = "EUR"
+    cash_balance: float = 0.0
+
+class PortfolioCreate(PortfolioBase):
+    pass
+
+class Portfolio(PortfolioBase):
+    id: int
+    transactions: List[Transaction] = []
+
+    class Config:
+        from_attributes = True

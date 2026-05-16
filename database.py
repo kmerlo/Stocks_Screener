@@ -173,6 +173,49 @@ class PortfolioURL(Base):
     url = Column(String)
     last_updated = Column(DateTime, default=func.now(), onupdate=func.now())
 
+class Portfolio(Base):
+    __tablename__ = "portfolios"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    base_currency = Column(String, default="EUR")
+    cash_balance = Column(Float, default=0.0)
+
+    transactions = relationship("Transaction", back_populates="portfolio", cascade="all, delete-orphan")
+
+class CommissionPlan(Base):
+    __tablename__ = "commission_plans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    type = Column(String)  # 'absolute' or 'percentage'
+    fixed_fee = Column(Float, default=0.0)
+    percentage = Column(Float, default=0.0)
+    min_fee = Column(Float, default=0.0)
+    max_fee = Column(Float, nullable=True)
+    currency = Column(String, default="EUR")
+
+    transactions = relationship("Transaction", back_populates="commission_plan")
+
+class Transaction(Base):
+    __tablename__ = "transactions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    portfolio_id = Column(Integer, ForeignKey("portfolios.id"))
+    ticker = Column(String, index=True)
+    type = Column(String) # BUY, SELL, SHORT, COVER, DEPOSIT, WITHDRAWAL
+    date = Column(DateTime, index=True)
+    quantity = Column(Float, default=0.0)
+    price = Column(Float, default=0.0) # In instrument currency
+    instrument_currency = Column(String, default="EUR")
+    exchange_rate = Column(Float, default=1.0) # Multiplier to convert to base_currency
+    commission_plan_id = Column(Integer, ForeignKey("commission_plans.id"), nullable=True)
+    commission_paid = Column(Float, default=0.0) # In base_currency
+    short_borrow_fee_rate = Column(Float, default=0.0) # Annual percentage rate e.g., 5.0 for 5%
+
+    portfolio = relationship("Portfolio", back_populates="transactions")
+    commission_plan = relationship("CommissionPlan", back_populates="transactions")
+
 def init_db():
     Base.metadata.create_all(bind=engine)
 

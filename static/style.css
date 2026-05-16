@@ -1144,3 +1144,52 @@ canvas.drawing-layer.active {
     color: #4a90e2;
     text-decoration: underline;
 }
+
+/* Portfolio Tracking Styles */
+.stat-box {
+    transition: transform 0.2s ease, background 0.2s ease;
+    border: 1px solid var(--border-color);
+}
+
+.stat-box:hover {
+    transform: translateY(-2px);
+    background: rgba(255, 255, 255, 0.08) !important;
+}
+
+#portfolio-positions-table th, #portfolio-history-table th {
+    text-align: left;
+    padding: 10px;
+    border-bottom: 1px solid var(--border-color);
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+#portfolio-positions-table td, #portfolio-history-table td {
+    padding: 12px 10px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    font-size: 0.9rem;
+}
+
+#portfolio-positions-table tr:hover, #portfolio-history-table tr:hover {
+    background-color: rgba(88, 166, 255, 0.05);
+}
+
+.badge {
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: white;
+}
+
+#portfolio-view .card h3 {
+    margin-top: 0;
+    color: var(--accent-color);
+}
+
+.header-btn.small {
+    height: 22px;
+    font-size: 0.7rem;
+    padding: 2px 6px;
+}

@@ -914,6 +914,130 @@ def delete_portfolio_url(url_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Portfolio URL deleted"}
 
+# --- Portfolio Tracking Endpoints ---
+
+@app.get("/portfolios/", response_model=List[schemas.Portfolio])
+def get_portfolios(db: Session = Depends(get_db)):
+    return db.query(db_mod.Portfolio).all()
+
+@app.post("/portfolios/", response_model=schemas.Portfolio)
+def create_portfolio(portfolio: schemas.PortfolioCreate, db: Session = Depends(get_db)):
+    db_portfolio = db_mod.Portfolio(**portfolio.model_dump())
+    db.add(db_portfolio)
+    db.commit()
+    db.refresh(db_portfolio)
+    return db_portfolio
+
+@app.delete("/portfolios/{portfolio_id}")
+def delete_portfolio(portfolio_id: int, db: Session = Depends(get_db)):
+    db_portfolio = db.query(db_mod.Portfolio).filter(db_mod.Portfolio.id == portfolio_id).first()
+    if not db_portfolio:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    db.delete(db_portfolio)
+    db.commit()
+    return {"message": "Portfolio deleted"}
+
+@app.get("/commission_plans/", response_model=List[schemas.CommissionPlan])
+def get_commission_plans(db: Session = Depends(get_db)):
+    return db.query(db_mod.CommissionPlan).all()
+
+@app.post("/commission_plans/", response_model=schemas.CommissionPlan)
+def create_commission_plan(plan: schemas.CommissionPlanCreate, db: Session = Depends(get_db)):
+    db_plan = db_mod.CommissionPlan(**plan.model_dump())
+    db.add(db_plan)
+    db.commit()
+    db.refresh(db_plan)
+    return db_plan
+
+@app.delete("/commission_plans/{plan_id}")
+def delete_commission_plan(plan_id: int, db: Session = Depends(get_db)):
+    db_plan = db.query(db_mod.CommissionPlan).filter(db_mod.CommissionPlan.id == plan_id).first()
+    if not db_plan:
+        raise HTTPException(status_code=404, detail="Commission Plan not found")
+    db.delete(db_plan)
+    db.commit()
+    return {"message": "Commission Plan deleted"}
+
+@app.get("/portfolios/{portfolio_id}/transactions/", response_model=List[schemas.Transaction])
+def get_transactions(portfolio_id: int, db: Session = Depends(get_db)):
+    return db.query(db_mod.Transaction).filter(db_mod.Transaction.portfolio_id == portfolio_id).order_by(db_mod.Transaction.date.desc()).all()
+
+@app.post("/portfolios/{portfolio_id}/transactions/", response_model=schemas.Transaction)
+def create_transaction(portfolio_id: int, transaction: schemas.TransactionCreate, db: Session = Depends(get_db)):
+    # Validate portfolio
+    db_portfolio = db.query(db_mod.Portfolio).filter(db_mod.Portfolio.id == portfolio_id).first()
+    if not db_portfolio:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+    
+    # Calculate commission if a plan is provided
+    commission_paid = 0.0
+    if transaction.commission_plan_id:
+        plan = db.query(db_mod.CommissionPlan).filter(db_mod.CommissionPlan.id == transaction.commission_plan_id).first()
+        if plan:
+            if plan.type == "absolute":
+                commission_paid = plan.fixed_fee
+            elif plan.type == "percentage":
+                trade_value_in_base = (transaction.price * transaction.quantity) * transaction.exchange_rate
+                calc_comm = trade_value_in_base * (plan.percentage / 100.0)
+                calc_comm += plan.fixed_fee
+                if plan.min_fee and calc_comm < plan.min_fee:
+                    calc_comm = plan.min_fee
+                if plan.max_fee and calc_comm > plan.max_fee:
+                    calc_comm = plan.max_fee
+                commission_paid = calc_comm
+    
+    trans_data = transaction.model_dump()
+    trans_data['commission_paid'] = commission_paid
+    trans_data['portfolio_id'] = portfolio_id
+    
+    db_trans = db_mod.Transaction(**trans_data)
+    db.add(db_trans)
+    
+    # Update cash balance for DEPOSIT/WITHDRAWAL directly
+    if db_trans.type == "DEPOSIT":
+        db_portfolio.cash_balance += db_trans.quantity
+    elif db_trans.type == "WITHDRAWAL":
+        db_portfolio.cash_balance -= db_trans.quantity
+    else:
+        # Cash accounting
+        trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
+        if db_trans.type in ["BUY", "COVER"]:
+            db_portfolio.cash_balance -= (trade_val + db_trans.commission_paid)
+        elif db_trans.type in ["SELL", "SHORT"]:
+            db_portfolio.cash_balance += (trade_val - db_trans.commission_paid)
+
+    db.commit()
+    db.refresh(db_trans)
+    return db_trans
+
+@app.delete("/transactions/{transaction_id}")
+def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
+    db_trans = db.query(db_mod.Transaction).filter(db_mod.Transaction.id == transaction_id).first()
+    if not db_trans:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+        
+    db_portfolio = db.query(db_mod.Portfolio).filter(db_mod.Portfolio.id == db_trans.portfolio_id).first()
+    
+    # Reverse cash impact
+    if db_trans.type == "DEPOSIT":
+        db_portfolio.cash_balance -= db_trans.quantity
+    elif db_trans.type == "WITHDRAWAL":
+        db_portfolio.cash_balance += db_trans.quantity
+    else:
+        trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
+        if db_trans.type in ["BUY", "COVER"]:
+            db_portfolio.cash_balance += (trade_val + db_trans.commission_paid)
+        elif db_trans.type in ["SELL", "SHORT"]:
+            db_portfolio.cash_balance -= (trade_val - db_trans.commission_paid)
+            
+    db.delete(db_trans)
+    db.commit()
+    return {"message": "Transaction deleted"}
+
+@app.get("/portfolios/{portfolio_id}/summary")
+def get_portfolio_summary(portfolio_id: int, db: Session = Depends(get_db)):
+    return finance_logic.get_portfolio_summary(db, portfolio_id)
+
 # Serve Frontend
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
