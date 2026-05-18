@@ -919,6 +919,10 @@ class FinanceLogic:
         
         db.commit()
 
+    def get_fundamental_data(self, db: Session, symbol: str):
+        """Retrieves fundamental data from the DB for a given symbol."""
+        return db.query(FundamentalData).filter(FundamentalData.symbol == symbol).first()
+
     def update_fundamental_data(self, db: Session, symbol: str):
         """Fetches fundamental data from yfinance and updates the DB."""
         try:

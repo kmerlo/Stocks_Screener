@@ -4641,30 +4641,27 @@ function resizeAllCharts() {
 }
 
 function setupFundamentalsToggle() {
-    const btn = document.getElementById('toggle-fundamentals-btn');
+    const btn = document.getElementById('toggle-fundamentals-side-btn');
     const title = document.getElementById('fundamentals-title-clickable');
-    const content = document.getElementById('fundamentals-collapsible-content');
     const section = document.getElementById('ticker-fundamentals-section');
     const icon = document.getElementById('fundamentals-toggle-icon');
     
-    if (!btn || !content || !section) return;
+    if (!btn || !section) return;
     
     const performToggle = () => {
-        const isCurrentlyHidden = content.classList.contains('hidden');
+        const isCurrentlyHidden = section.classList.contains('hidden');
         if (isCurrentlyHidden) {
-            content.classList.remove('hidden');
-            section.classList.remove('collapsed');
-            icon.textContent = '▼';
-            localStorage.setItem('fundamentals_collapsed', 'false');
+            section.classList.remove('hidden');
+            if (icon) icon.textContent = '▲';
+            localStorage.setItem('fundamentals_side_collapsed', 'false');
         } else {
-            content.classList.add('hidden');
-            section.classList.add('collapsed');
-            icon.textContent = '▶';
-            localStorage.setItem('fundamentals_collapsed', 'true');
+            section.classList.add('hidden');
+            if (icon) icon.textContent = '▼';
+            localStorage.setItem('fundamentals_side_collapsed', 'true');
         }
         
-        // Resize after animation
-        setTimeout(resizeAllCharts, 350);
+        // Let the flex container update layout before resizing the chart
+        setTimeout(resizeAllCharts, 50);
     };
     
     btn.addEventListener('click', (e) => {
@@ -4674,14 +4671,6 @@ function setupFundamentalsToggle() {
     
     if (title) {
         title.addEventListener('click', performToggle);
-    }
-    
-    // Initial state from localStorage
-    const savedState = localStorage.getItem('fundamentals_collapsed');
-    if (savedState === 'true') {
-        content.classList.add('hidden');
-        section.classList.add('collapsed');
-        icon.textContent = '▶';
     }
 }
 
@@ -4697,6 +4686,15 @@ function initApp() {
         sidebar.classList.toggle('collapsed');
         setTimeout(resizeAllCharts, 350);
     });
+
+    // Config checkbox for Reopening Fundamentals
+    const configReopenCheckbox = document.getElementById('config-reopen-fundamentals');
+    if (configReopenCheckbox) {
+        configReopenCheckbox.checked = localStorage.getItem('config_reopen_fundamentals') === 'true';
+        configReopenCheckbox.addEventListener('change', (e) => {
+            localStorage.setItem('config_reopen_fundamentals', e.target.checked);
+        });
+    }
 
     ['visible-bars-input', 'right-margin-input', 'main-height-input', 'sub-height-input'].forEach(id => {
         document.getElementById(id)?.addEventListener('change', () => {
@@ -5932,9 +5930,20 @@ async function loadFundamentalData(symbol) {
             return;
         }
 
+        // Check configuration for reopening
+        const autoReopen = localStorage.getItem('config_reopen_fundamentals') === 'true';
+        const isCollapsed = localStorage.getItem('fundamentals_side_collapsed') === 'true';
+        const icon = document.getElementById('fundamentals-toggle-icon');
+
         if (!data) {
             console.log("No fundamental data in DB, triggering update...");
-            section.classList.remove('hidden');
+            
+            if (autoReopen || !isCollapsed) {
+                section.classList.remove('hidden');
+            if (icon) icon.textContent = '▲';
+                if (autoReopen && isCollapsed) localStorage.setItem('fundamentals_side_collapsed', 'false');
+            }
+            
             document.getElementById('fundamental-ticker-symbol').textContent = symbol;
             document.getElementById('fundamentals-container').innerHTML = '<p style="padding: 20px; color: var(--text-secondary);">Recupero dati fondamentali in corso...</p>';
             updateFundamentalsManually(symbol);
@@ -5954,7 +5963,11 @@ async function loadFundamentalData(symbol) {
                 .catch(err => console.error("Background update failed:", err));
         }
 
-        section.classList.remove('hidden');
+        if (autoReopen || !isCollapsed) {
+            section.classList.remove('hidden');
+            if (icon) icon.textContent = '▲';
+            if (autoReopen && isCollapsed) localStorage.setItem('fundamentals_side_collapsed', 'false');
+        }
         document.getElementById('fundamental-ticker-fullname').textContent = activeTickerName || symbol;
         document.getElementById('fundamental-ticker-symbol').textContent = symbol;
 

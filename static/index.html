@@ -22,6 +22,7 @@
             <div class="nav-item" data-view="maintenance">Manutenzione DB</div>
             <div class="nav-item" data-view="gsheet">Google Sheet</div>
             <div class="nav-item" data-view="investing">Investing.com</div>
+            <div class="nav-item" data-view="configuration">Configurazione</div>
         </div>
     </div>
 
@@ -246,46 +247,55 @@
                 </div>
 
                 <!-- Main Chart and Subplots -->
-                <div id="chart-panes-container" style="display: flex; flex-direction: column; gap: 10px;">
-                    <div class="drawing-canvas-container">
-                        <div id="chart-container"></div>
-                        <canvas id="drawing-layer" class="drawing-layer"></canvas>
-                    </div>
-                </div>
-
-                <!-- Ticker Fundamentals Section -->
-                <div id="ticker-fundamentals-section" class="card hidden" style="margin-top: 20px;">
-                    <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0;">
-                        <div style="display: flex; flex-direction: column; gap: 4px;">
-                            <h3 style="margin-bottom: 0; cursor: pointer;" id="fundamentals-title-clickable">
-                                Dati Fondamentali: <span id="fundamental-ticker-fullname">---</span> 
-                                (<span id="fundamental-ticker-symbol">---</span>)
-                            </h3>
-                            <small id="fundamental-last-updated" style="color: var(--text-secondary);"></small>
+                <div id="chart-and-fundamentals-wrapper" style="display: flex; flex-direction: column; gap: 0; position: relative;">
+                    <div id="chart-panes-container" style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px;">
+                        <div class="drawing-canvas-container">
+                            <div id="chart-container"></div>
+                            <canvas id="drawing-layer" class="drawing-layer"></canvas>
                         </div>
-                        <button id="toggle-fundamentals-btn" class="fundamentals-toggle-btn" title="Espandi/Contrai Dati Fondamentali">
-                            <span id="fundamentals-toggle-icon">▼</span>
+                    </div>
+
+                    <!-- Toggle Button for Fundamentals (horizontal bar below chart) -->
+                    <div style="display: flex; justify-content: center; z-index: 100; margin-top: 5px;">
+                        <button id="toggle-fundamentals-side-btn" class="fundamentals-toggle-btn" style="border-radius: 4px; width: 100%; padding: 4px 0;" title="Espandi/Contrai Dati Fondamentali">
+                            <span id="fundamentals-toggle-icon">▼</span> Dati Fondamentali
                         </button>
                     </div>
 
-                    <div id="fundamentals-collapsible-content" class="collapsible-content" style="margin-top: 15px;">
-                        <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
-                            <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 0.9rem;">
-                                <input type="checkbox" id="update-fundamentals-list-checkbox"> Lista
-                            </label>
-                            <button id="update-fundamentals-btn" class="secondary">Aggiorna Dati Fondamentali</button>
+                    <!-- Ticker Fundamentals Section (below chart, full width) -->
+                    <div id="ticker-fundamentals-section" class="card hidden" style="width: 100%; margin-top: 5px; max-height: 600px; overflow-y: auto;">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0;">
+                            <div style="display: flex; flex-direction: column; gap: 4px;">
+                                <h3 style="margin-bottom: 0; cursor: pointer;" id="fundamentals-title-clickable">
+                                    Dati Fondamentali: <span id="fundamental-ticker-fullname">---</span> 
+                                    (<span id="fundamental-ticker-symbol">---</span>)
+                                </h3>
+                                <small id="fundamental-last-updated" style="color: var(--text-secondary);"></small>
+                            </div>
                         </div>
-                        <div id="fundamentals-container" class="fundamentals-grid">
-                            <!-- Filled by JS -->
-                        </div>
-                        <div id="fundamental-summary"
-                            style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border-color); font-size: 0.9rem; line-height: 1.5; color: var(--text-secondary);">
-                            <!-- Filled by JS -->
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
+
+                        <div id="fundamentals-collapsible-content" class="collapsible-content" style="margin-top: 15px;">
+                            <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
+                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 0.9rem;">
+                                    <input type="checkbox" id="update-fundamentals-list-checkbox"> Lista
+                                </label>
+                                <button id="update-fundamentals-btn" class="secondary">Aggiorna</button>
+                            </div>
+                            <div id="fundamentals-container" class="fundamentals-grid" style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));">
+                                <!-- Filled by JS -->
+                            </div>
+                            
+                            <div id="fundamental-summary"
+                                style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--border-color); font-size: 0.9rem; line-height: 1.5; color: var(--text-secondary);">
+                                <!-- Filled by JS -->
+                            </div>
+                        </div> <!-- chiude fundamentals-collapsible-content -->
+                    </div> <!-- chiude ticker-fundamentals-section -->
+                </div> <!-- chiude chart-and-fundamentals-wrapper -->
+            </div> <!-- chiude card -->
+        </div> <!-- chiude monitoring-view -->
+
+
 
         <!-- Lists Management View -->
         <div id="lists-view" class="view-container hidden">
@@ -1334,8 +1344,26 @@
                     </tbody>
                 </table>
             </div>
+            </div>
         </div>
-    </div>
+
+        <!-- Configuration View -->
+        <div id="configuration-view" class="view-container hidden">
+            <div class="card">
+                <h3>Configurazione</h3>
+                <div style="margin-top: 20px;">
+                    <div class="control-group" style="margin-bottom: 15px;">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                            <input type="checkbox" id="config-reopen-fundamentals">
+                            Riapri automaticamente i fondamentali al cambio ticker
+                        </label>
+                        <small style="color: var(--text-secondary); display: block; margin-left: 28px;">
+                            Se attivo, i dati fondamentali verranno mostrati automaticamente ogni volta che selezioni un nuovo ticker, anche se li avevi nascosti.
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
 
     <script src="script.js?v=2"></script>
 </body>

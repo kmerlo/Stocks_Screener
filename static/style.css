@@ -270,18 +270,20 @@ select {
 }
 
 .fundamentals-toggle-btn {
-    background: none;
+    background: var(--bg-card);
     border: 1px solid var(--border-color);
+    border-right: none;
     color: var(--text-color);
-    width: 32px;
-    height: 32px;
-    border-radius: 6px;
+    width: 24px;
+    height: 48px;
+    border-radius: 4px 0 0 4px;
     display: flex;
     align-items: center;
     justify-content: center;
     cursor: pointer;
     transition: all 0.2s;
-    font-size: 1.2rem;
+    font-size: 1rem;
+    box-shadow: -2px 0 5px rgba(0,0,0,0.2);
 }
 
 .fundamentals-toggle-btn:hover {
@@ -289,17 +291,17 @@ select {
     color: var(--accent-color);
 }
 
-.fundamentals-toggle-btn.collapsed i {
-    transform: rotate(-90deg);
-}
-
 #ticker-fundamentals-section {
-    transition: margin-top 0.3s ease;
+    transition: width 0.3s ease, margin 0.3s ease, opacity 0.3s ease;
 }
 
-#ticker-fundamentals-section.collapsed {
-    padding-bottom: 10px;
-    margin-top: 10px;
+#ticker-fundamentals-section.hidden {
+    width: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    opacity: 0;
+    overflow: hidden;
+    border: none;
 }
 
 .drawing-layer {
