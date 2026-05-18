@@ -1075,6 +1075,23 @@
                 </div>
             </div>
         </div>
+        <!-- Configuration View -->
+        <div id="configuration-view" class="view-container hidden">
+            <div class="card">
+                <h3>Configurazione</h3>
+                <div style="margin-top: 20px;">
+                    <div class="control-group" style="margin-bottom: 15px;">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                            <input type="checkbox" id="config-reopen-fundamentals">
+                            Riapri automaticamente i fondamentali al cambio ticker
+                        </label>
+                        <small style="color: var(--text-secondary); display: block; margin-left: 28px;">
+                            Se attivo, i dati fondamentali verranno mostrati automaticamente ogni volta che selezioni un nuovo ticker, anche se li avevi nascosti.
+                        </small>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
     <!-- Indicator Configuration Modal -->
     <div id="indicator-modal-overlay" class="modal-overlay hidden">
@@ -1347,23 +1364,6 @@
             </div>
         </div>
 
-        <!-- Configuration View -->
-        <div id="configuration-view" class="view-container hidden">
-            <div class="card">
-                <h3>Configurazione</h3>
-                <div style="margin-top: 20px;">
-                    <div class="control-group" style="margin-bottom: 15px;">
-                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
-                            <input type="checkbox" id="config-reopen-fundamentals">
-                            Riapri automaticamente i fondamentali al cambio ticker
-                        </label>
-                        <small style="color: var(--text-secondary); display: block; margin-left: 28px;">
-                            Se attivo, i dati fondamentali verranno mostrati automaticamente ogni volta che selezioni un nuovo ticker, anche se li avevi nascosti.
-                        </small>
-                    </div>
-                </div>
-            </div>
-        </div>
 
     <script src="script.js?v=2"></script>
 </body>
