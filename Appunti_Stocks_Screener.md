@@ -1,10 +1,14 @@
 # Appunti Stocks Screener
 
+Panoramica:
+Il mio interesse sta crescendo sempre più nel campo finanziario e ho deciso di iniziare un progetto personale. Ho deciso di sviluppare un'applicazione web full-stack che mi permetta di analizzare i mercati finanziari in modo approfondito, in particolare le azioni.
+
 ---
 
 ## 1. Panoramica dell'Applicazione
 
 **Stocks Screener** è un'applicazione web full-stack per l'analisi finanziaria personale. Permette di:
+
 - Gestire liste di ticker azionari
 - Scaricare e visualizzare dati storici di prezzo (via **yfinance**)
 - Visualizzare grafici interattivi con candele e indicatori tecnici
@@ -102,6 +106,7 @@ Usa **SQLAlchemy ORM** con SQLite (`finance_app.db`). Le tabelle principali sono
 ### 4.3 Schemi Pydantic (`schemas.py`)
 
 Definisce i modelli di validazione per ogni endpoint:
+
 - **CRUD classico**: `TickerListCreate/TickerList`, `TickerCreate/Ticker`, `PriceData`
 - **Indicatori**: `IndicatorRequest`, `TemplateIndicatorBase/Create`, `ChartTemplateCreate/Update`
 - **Screening**: `ScreeningRequest`, `DynamicScreeningRequest`, `ModularScreeningResult`
@@ -115,6 +120,7 @@ Definisce i modelli di validazione per ogni endpoint:
 Classe singleton `FinanceLogic` (istanziata come `finance_logic` a fine modulo). Funzionalità principali:
 
 #### Download e Gestione Dati
+
 - **`download_and_save_data()`**: Download incrementale da yfinance. Se esistono dati nel DB, scarica solo dal giorno dell'ultimo record in poi (per aggiornare l'ultima candela incompleta).
 - **`extend_history()`**: Estende la storia **all'indietro** (prima del record più vecchio).
 - **`_process_yf_df()`**: Processa il DataFrame di yfinance, gestisce multi-index, timezone, e fa upsert (insert o update) nel DB.
@@ -123,10 +129,12 @@ Classe singleton `FinanceLogic` (istanziata come `finance_logic` a fine modulo).
 - **`vacuum_database()`**: Esegue `VACUUM` SQLite per ridurre dimensioni file.
 
 #### Calcolo Indicatori
+
 - **`calculate_indicators()`**: Calcola indicatori tecnici usando **pandas-ta-classic** (`df.ta.sma()`, `df.ta.rsi()`, ecc.). Supporta: SMA, EMA, RSI, MACD, Bollinger Bands, Stoch, Donchian, Supertrend, ATR, CCI, ROC, BBP, Volume, ecc.
 - Supporta **timeframe multipli**: Daily (D), Weekly (W), Monthly (M) tramite resampling del DataFrame.
 
 #### Screening
+
 - **`run_modular_screening()`**: Screening con periodi ROC configurabili.
 - **`run_dynamic_screening()`**: Screening generico con **sistema di caching** avanzato:
   1. Controlla nella tabella `screening_values` se i valori sono aggiornati
@@ -136,15 +144,18 @@ Classe singleton `FinanceLogic` (istanziata come `finance_logic` a fine modulo).
 - **`_calculate_worker()`**: Worker statico per calcoli paralleli. Calcola anche **distanza % dal MA** e **giorni consecutivi sopra/sotto** per medie mobili.
 
 #### Allarmi
+
 - **`check_alarms()`**: Controlla se gli allarmi attivi sono stati scattati confrontando le ultime due candele con i livelli definiti dai disegni (linee orizzontali, trend line, ray). Supporta trigger "close" e "intraday".
 
 #### Dati Fondamentali
+
 - **`update_fundamental_data()`**: Scarica dati fondamentali da yfinance (Market Cap, P/E, Revenue, Margins, Debt, ecc.) e li salva/aggiorna nel DB.
 - **`update_list_fundamentals()`**: Aggiornamento batch per tutti i ticker di una lista.
 
 ### 4.5 Scraper Investing.com (`investing_scraper.py`)
 
 Modulo Selenium che:
+
 - **`scrape_investing_portfolio()`**: Naviga un URL portfolio Investing.com, gestisce Cloudflare, cookie, e scrapa le tabelle "Prezzo" e "Sezione tecnica"
 - **`download_investing_csv()`**: Automazione download CSV dal portfolio Investing.com
 - **`read_local_investing_csv()`**: Legge l'ultimo CSV già scaricato dalla cartella `CSV/` locale
@@ -155,6 +166,7 @@ Modulo Selenium che:
 ## 5. API Endpoints (Riepilogo)
 
 ### Ticker Lists
+
 | Metodo | Endpoint                                  | Descrizione                        |
 |--------|-------------------------------------------|------------------------------------|
 | POST   | `/lists/`                                 | Crea nuova lista                   |
@@ -168,6 +180,7 @@ Modulo Selenium che:
 | POST   | `/lists/{list_id}/upload-csv/`            | Importa ticker da file CSV         |
 
 ### Dati Prezzo
+
 | Metodo | Endpoint                                  | Descrizione                                     |
 |--------|-------------------------------------------|-------------------------------------------------|
 | POST   | `/tickers/{symbol}/update-data/`          | Download/aggiornamento incrementale dati         |
@@ -177,6 +190,7 @@ Modulo Selenium che:
 | DELETE | `/tickers/{symbol}/data-from/?date=`      | Elimina dati da una data in poi ("Pulisci")      |
 
 ### Screening
+
 | Metodo | Endpoint                        | Descrizione                              |
 |--------|---------------------------------|------------------------------------------|
 | POST   | `/screening/run`                | Screening ROC multi-periodo              |
@@ -185,12 +199,14 @@ Modulo Selenium che:
 | POST/PUT/DELETE | `/screening/columns/...`| CRUD colonne di screening                |
 
 ### Indicatori & Template
+
 | Metodo | Endpoint                            | Descrizione                          |
 |--------|-------------------------------------|--------------------------------------|
 | POST   | `/indicators/{symbol}/calculate`    | Calcola indicatori per il grafico    |
 | GET/POST/PUT/DELETE | `/templates/...`    | CRUD template configurazione chart   |
 
 ### Disegni & Allarmi
+
 | Metodo | Endpoint                                    | Descrizione                    |
 |--------|---------------------------------------------|--------------------------------|
 | GET/POST/PUT/DELETE | `/tickers/{symbol}/drawings/...` | CRUD disegni per ticker        |
@@ -199,6 +215,7 @@ Modulo Selenium che:
 | POST/DELETE | `/drawings/{id}/alarm`                 | Crea/elimina allarme           |
 
 ### Fondamentali
+
 | Metodo | Endpoint                                    | Descrizione                         |
 |--------|---------------------------------------------|-------------------------------------|
 | GET    | `/tickers/{symbol}/fundamentals`            | Leggi fondamentali dal DB           |
@@ -207,6 +224,7 @@ Modulo Selenium che:
 | POST   | `/lists/{list_id}/fundamentals/update`      | Aggiorna fondamentali per lista     |
 
 ### Ticker Mappings (Yahoo ↔ Investing)
+
 | Metodo | Endpoint                         | Descrizione                            |
 |--------|----------------------------------|----------------------------------------|
 | GET/POST/DELETE | `/tickers/mapping/...` | CRUD mappature ticker                  |
@@ -214,6 +232,7 @@ Modulo Selenium che:
 | GET    | `/tickers/mapping/export/`       | Esporta mappature in CSV               |
 
 ### Google Sheets & Investing.com
+
 | Metodo | Endpoint                         | Descrizione                                |
 |--------|----------------------------------|--------------------------------------------|
 | GET    | `/gsheet/data`                   | Leggi dati da Google Spreadsheet           |
@@ -223,6 +242,7 @@ Modulo Selenium che:
 | GET/POST/DELETE | `/investing/urls`     | Gestione URL portfolio salvati             |
 
 ### Manutenzione DB
+
 | Metodo | Endpoint                         | Descrizione                        |
 |--------|----------------------------------|------------------------------------|
 | GET    | `/maintenance/orphans`           | Indicatori orfani nella cache      |
@@ -267,6 +287,7 @@ Modulo Selenium che:
 ### 6.4 Stato Frontend (Variabili Globali in `script.js`)
 
 Le variabili principali gestiscono:
+
 - `activeView`: vista corrente
 - `activeListId` / `activeTicker`: lista e ticker selezionati
 - `mainChart` / `priceSeries`: istanze Lightweight Charts
@@ -281,6 +302,7 @@ Le variabili principali gestiscono:
 ## 7. Flussi Operativi Principali
 
 ### 7.1 Aggiornamento Dati Ticker
+
 1. L'utente seleziona un ticker e clicca "Aggiorna Dati"
 2. Frontend chiama `POST /tickers/{symbol}/update-data/`
 3. Backend controlla la data dell'ultimo record nel DB
@@ -289,6 +311,7 @@ Le variabili principali gestiscono:
 6. Dopo il download, `check_alarms()` verifica se allarmi sono scattati
 
 ### 7.2 Screening
+
 1. L'utente apre la vista Screening e seleziona un foglio (Base, ROC, Custom)
 2. Frontend chiama `POST /screening/run` o `/screening/run-dynamic`
 3. Backend controlla la **cache** (`screening_values`):
@@ -298,6 +321,7 @@ Le variabili principali gestiscono:
 5. L'utente può filtrare e salvare una sotto-lista ("sub-universe")
 
 ### 7.3 Disegni e Allarmi
+
 1. L'utente seleziona uno strumento dalla toolbar di disegno
 2. Clicca sul grafico per posizionare i punti
 3. Il disegno viene renderizzato sul `<canvas>` e salvato nel DB (`POST /drawings/`)
@@ -309,6 +333,7 @@ Le variabili principali gestiscono:
 ## 8. Note Operative
 
 ### Avvio rapido
+
 ```bash
 cd ~/Documents/progetti/Stocks_Screener
 uv run main.py
@@ -316,10 +341,13 @@ oppure
 uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 
 ```
+
 L'app sarà disponibile su `http://localhost:8000`.
 
 ### Checkbox "Lista" (Bulk Operations)
+
 Nella header bar c'è la checkbox "Lista" che permette di applicare operazioni (Aggiorna Dati, Estendi, Elimina, Pulisci) a **tutti i ticker della lista selezionata** invece che al singolo ticker.
 
 ### Database
+
 Il file `finance_app.db` viene creato automaticamente al primo avvio. Per ridurne le dimensioni dopo cancellazioni massive, usare il pulsante "Ottimizza Database (VACUUM)" nella vista Manutenzione.
