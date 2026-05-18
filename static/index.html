@@ -905,32 +905,32 @@
         <!-- Investing.com View -->
         <div id="investing-view" class="view-container hidden">
             <div class="card" style="margin-bottom: 20px;">
-                <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
-                    <div class="control-group">
-                        <label for="investing-url-select">Lista URL:</label>
-                        <select id="investing-url-select" style="min-width: 150px;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                    <div class="control-group" style="gap: 4px;">
+                        <label for="investing-url-select">Lista:</label>
+                        <select id="investing-url-select" style="min-width: 100px; width: 120px;" title="Seleziona una lista URL salvata">
                             <option value="">Nuovo URL...</option>
                         </select>
                     </div>
-                    <div class="control-group">
-                        <label for="investing-url-input">URL Portfolio:</label>
+                    <div class="control-group" style="gap: 4px;">
+                        <label for="investing-url-input">URL:</label>
                         <input type="text" id="investing-url-input" value="https://it.investing.com/portfolio"
-                            style="width: 350px;" placeholder="Incolla URL del portfolio Investing.com">
+                            style="width: 200px;" placeholder="URL Portfolio" title="Incolla l'URL del portfolio Investing.com">
                     </div>
-                    <button id="investing-save-url-btn" class="secondary">💾 Salva Lista URL</button>
-                    <button id="investing-delete-url-btn" class="danger">🗑️ Del Lista URL</button>
+                    <button id="investing-save-url-btn" class="secondary" title="Salva Lista URL">💾 Salva</button>
+                    <button id="investing-delete-url-btn" class="danger" title="Elimina Lista URL">🗑️ Elimina</button>
                     <div class="header-divider"></div>
-                    <button id="investing-load-btn">📊 Carica Dati</button>
+                    <button id="investing-load-btn" title="Carica Dati tramite Chrome">📊 Dati Web</button>
                     <button id="investing-load-csv-btn" class="secondary"
-                        style="background-color: var(--secondary-bg); color: var(--text-color); border: 1px solid var(--border-color);">📥
-                        Carica Dati CSV dal web</button>
+                        style="background-color: var(--secondary-bg); color: var(--text-color); border: 1px solid var(--border-color);" title="Carica Dati CSV dal web">📥 CSV Web</button>
                     <button id="investing-load-csv-local-btn" class="secondary"
-                        style="background-color: var(--secondary-bg); color: var(--text-color); border: 1px solid var(--border-color); margin-left: 5px;">📁
-                        Carica Dati CSV dal PC</button>
+                        style="background-color: var(--secondary-bg); color: var(--text-color); border: 1px solid var(--border-color);" title="Carica Dati CSV dal PC">📁 CSV PC</button>
+                </div>
+                <div style="display: flex; align-items: center; gap: 15px; margin-top: 10px;">
+                    <p style="font-size: 0.8rem; color: #8b949e; margin: 0;">⚠️ Chrome deve essere chiuso prima di
+                        cliccare "Carica Dati".</p>
                     <span id="investing-status" style="font-size: 0.85rem; color: #8b949e;"></span>
                 </div>
-                <p style="font-size: 0.8rem; color: #8b949e; margin-top: 10px;">⚠️ Chrome deve essere chiuso prima di
-                    cliccare "Carica Dati".</p>
             </div>
 
             <div class="card" id="investing-results-card" style="display: none;">
@@ -943,7 +943,7 @@
                     <!-- Dynamic CSV tabs will be added here -->
                     <div id="investing-csv-tabs" style="display: flex; gap: 10px;"></div>
                 </div>
-                <div style="overflow-x: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+                <div style="max-height: 650px; overflow: auto; border: 1px solid var(--border-color); border-radius: 6px;">
                     <table id="investing-table">
                         <thead>
                             <tr id="investing-table-head"></tr>
@@ -964,6 +964,7 @@
                             <option value="">Seleziona Portafoglio...</option>
                         </select>
                         <button id="create-portfolio-btn" class="header-btn">Nuovo</button>
+                        <button id="delete-portfolio-btn" class="header-btn" style="background-color: var(--danger-color);">Cancella</button>
                         <button id="manage-commission-plans-btn" class="header-btn secondary">Piani Commissionali</button>
                     </div>
                 </div>

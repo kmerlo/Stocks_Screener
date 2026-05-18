@@ -1195,3 +1195,25 @@ canvas.drawing-layer.active {
     font-size: 0.7rem;
     padding: 2px 6px;
 }
+
+/* --- Maintenance Tables Sticky Headers --- */
+#maintenance-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: var(--card-bg);
+}
+
+#maintenance-mappings table thead tr:nth-child(1) th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: var(--card-bg);
+}
+
+#maintenance-mappings table thead tr:nth-child(2) th {
+    position: sticky;
+    top: 42px;
+    z-index: 9;
+    background-color: var(--card-bg);
+}

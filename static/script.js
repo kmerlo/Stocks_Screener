@@ -5407,7 +5407,46 @@ function renderCSVBody(dataArray, originalHeaders, tableBody) {
                 style="color:var(--accent-color); text-decoration:none; font-weight:600;"
                 onclick="event.preventDefault(); goToTicker('${yahooTicker}')">${yahooTicker}</a>`;
         } else {
-            tdYahoo.textContent = '-';
+            // No mapping: show inline input to quickly add one
+            const wrapper = document.createElement('div');
+            wrapper.style.cssText = 'display:flex; align-items:center; gap:4px;';
+
+            const inp = document.createElement('input');
+            inp.type = 'text';
+            inp.placeholder = 'Yahoo ticker';
+            inp.style.cssText = 'width:90px; padding:3px 5px; font-size:0.78rem; border:1px solid var(--border-color); border-radius:4px; background:var(--bg-color); color:var(--text-color);';
+            inp.title = `Aggiungi mapping per ${invTicker}`;
+
+            const btn = document.createElement('button');
+            btn.textContent = '✚';
+            btn.title = 'Salva mapping';
+            btn.style.cssText = 'padding:2px 6px; font-size:0.78rem; background:var(--accent-color); color:white; border:none; border-radius:4px; cursor:pointer;';
+
+            const saveMapping = async () => {
+                const yTicker = inp.value.trim().toUpperCase();
+                if (!yTicker) { inp.focus(); return; }
+                try {
+                    await apiCall('/tickers/mapping/', 'POST', {
+                        symbol_yahoo: yTicker,
+                        symbol_investing: invTicker,
+                        name: null
+                    });
+                    await refreshTickerMappingsLookup();
+                    // Replace the cell content with a link to the new ticker
+                    tdYahoo.innerHTML = `<a href="#" class="ticker-link" 
+                        style="color:var(--accent-color); text-decoration:none; font-weight:600;"
+                        onclick="event.preventDefault(); goToTicker('${yTicker}')">${yTicker}</a>`;
+                } catch (err) {
+                    alert('Errore salvataggio mapping: ' + err.message);
+                }
+            };
+
+            btn.addEventListener('click', saveMapping);
+            inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveMapping(); });
+
+            wrapper.appendChild(inp);
+            wrapper.appendChild(btn);
+            tdYahoo.appendChild(wrapper);
         }
         tr.appendChild(tdYahoo);
 
@@ -6529,7 +6568,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 2. Component initialization
     initApp();
     initInvestingLogic();
-    // setupMaintenanceTabs(); // This was already in initApp or setup elsewhere? Checking...
+    setupMaintenanceTabs();
 
     // 3. Global mapping listeners
     document.getElementById('refresh-mappings-btn')?.addEventListener('click', loadTickerMappings);
@@ -6809,6 +6848,36 @@ if (document.getElementById('create-portfolio-btn')) {
     document.getElementById('create-portfolio-btn').onclick = () => {
         document.getElementById('create-portfolio-modal').classList.remove('hidden');
     };
+}
+
+async function deletePortfolio() {
+    if (!activePortfolioId) {
+        alert("Seleziona prima un portafoglio da eliminare.");
+        return;
+    }
+    const select = document.getElementById('portfolio-select');
+    const portfolioName = select.options[select.selectedIndex].text;
+    if (!confirm(`Sei sicuro di voler eliminare il portafoglio "${portfolioName}"?\nTutte le transazioni associate verranno eliminate definitivamente.`)) return;
+    try {
+        const response = await fetch(`/portfolios/${activePortfolioId}`, { method: 'DELETE' });
+        if (!response.ok) {
+            const err = await response.json();
+            alert("Errore: " + (err.detail || "Eliminazione fallita"));
+            return;
+        }
+        activePortfolioId = null;
+        document.getElementById('portfolio-summary-dashboard').style.display = 'none';
+        document.getElementById('portfolio-actions').style.display = 'none';
+        document.getElementById('portfolio-positions-container').style.display = 'none';
+        document.getElementById('portfolio-history-container').style.display = 'none';
+        await loadPortfolios();
+    } catch (err) {
+        alert("Errore nell'eliminazione: " + err.message);
+    }
+}
+
+if (document.getElementById('delete-portfolio-btn')) {
+    document.getElementById('delete-portfolio-btn').onclick = deletePortfolio;
 }
 
 if (document.getElementById('manage-commission-plans-btn')) {
