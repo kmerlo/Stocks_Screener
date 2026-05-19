@@ -1239,7 +1239,7 @@
     <div id="transaction-modal" class="modal-overlay hidden">
         <div class="modal-box" style="max-width: 500px;">
             <div class="modal-header">
-                <span>Nuova Transazione</span>
+                <span id="transaction-modal-title">Nuova Transazione</span>
                 <button class="modal-close-btn" onclick="document.getElementById('transaction-modal').classList.add('hidden')">×</button>
             </div>
             <div class="modal-body">
@@ -1262,7 +1262,7 @@
                 </div>
                 <div class="modal-form-row">
                     <label>Quantità:</label>
-                    <input type="number" step="0.0001" id="trans-qty" style="flex:1;">
+                    <input type="number" step="1" id="trans-qty" style="flex:1;">
                 </div>
                 <div class="modal-form-row">
                     <label>Prezzo:</label>
@@ -1302,7 +1302,7 @@
     <div id="cash-modal" class="modal-overlay hidden">
         <div class="modal-box" style="max-width: 400px;">
             <div class="modal-header">
-                <span>Deposita / Preleva Liquidità</span>
+                <span id="cash-modal-title">Deposita / Preleva Liquidità</span>
                 <button class="modal-close-btn" onclick="document.getElementById('cash-modal').classList.add('hidden')">×</button>
             </div>
             <div class="modal-body">

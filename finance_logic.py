@@ -1012,6 +1012,61 @@ class FinanceLogic:
             print(f"Error fetching FX rate {ticker_sym}: {e}")
             return 1.0
 
+    def get_historical_fx_rate(self, base: str, quote: str, date_val):
+        """Fetches historical exchange rate from yfinance (base -> quote) for a specific date."""
+        if base == quote:
+            return 1.0
+        
+        # Yahoo Finance format is BASEQUOTE=X
+        ticker_sym = f"{base}{quote}=X"
+        
+        import datetime
+        if isinstance(date_val, str):
+            try:
+                date_str = date_val.split('.')[0] if '.' in date_val else date_val
+                if 'T' in date_str:
+                    parts = date_str.split('T')
+                    time_part = parts[1]
+                    if len(time_part.split(':')) == 2:
+                        date_str += ':00' # Add seconds if missing
+                    dt = datetime.datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S")
+                else:
+                    dt = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+            except Exception as e:
+                print(f"DEBUG FX: Error parsing date string {date_val}: {e}")
+                dt = datetime.datetime.now()
+        elif isinstance(date_val, (datetime.datetime, datetime.date)):
+            dt = datetime.datetime(date_val.year, date_val.month, date_val.day)
+        else:
+            print(f"DEBUG FX: Unknown date_val type {type(date_val)}")
+            dt = datetime.datetime.now()
+
+        # Query a range of 4 days before to 2 days after to find the closest business day
+        start_date = (dt - datetime.timedelta(days=4)).strftime("%Y-%m-%d")
+        end_date = (dt + datetime.timedelta(days=2)).strftime("%Y-%m-%d")
+        
+        print(f"DEBUG FX: Fetching {ticker_sym} from {start_date} to {end_date} for target {dt}")
+        try:
+            ticker = yf.Ticker(ticker_sym)
+            df = ticker.history(start=start_date, end=end_date)
+            if df.empty:
+                print(f"DEBUG FX: First history fetch empty, fetching 1mo for {ticker_sym}")
+                df = ticker.history(period="1mo")
+                
+            if not df.empty:
+                target_date = dt.date()
+                df['date_diff'] = [abs((r.date() - target_date)).days for r in df.index]
+                closest_row = df.sort_values(by='date_diff').iloc[0]
+                rate = float(closest_row['Close'])
+                print(f"DEBUG FX: Found rate {rate} for {ticker_sym} on {closest_row.name}")
+                return rate
+            
+            print(f"DEBUG FX: DataFrame completely empty for {ticker_sym}. Falling back to current rate.")
+            return self.get_fx_rate(base, quote)
+        except Exception as e:
+            print(f"DEBUG FX: Error fetching historical FX rate {ticker_sym} for {dt}: {e}")
+            return self.get_fx_rate(base, quote)
+
     def get_portfolio_summary(self, db: Session, portfolio_id: int):
         from database import Portfolio, Transaction, PriceData
         from fastapi import HTTPException

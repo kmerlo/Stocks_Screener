@@ -1,3 +1,6 @@
+# Antigravity AI
+.antigravity
+
 # Python-generated files
 __pycache__/
 *.py[oc]
@@ -19,3 +22,4 @@ CSV/*
 error_page.html
 *.log
 python-to-gsheet-*.json
+

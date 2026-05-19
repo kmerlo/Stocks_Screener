@@ -6693,6 +6693,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     });
 
     document.getElementById('add-manual-mapping-btn')?.addEventListener('click', addManualMapping);
+
+    document.getElementById('trans-currency')?.addEventListener('change', updateAutomaticExchangeRate);
+    document.getElementById('trans-date')?.addEventListener('change', updateAutomaticExchangeRate);
 });
 
 async function addManualMapping() {
@@ -6737,8 +6740,11 @@ function goToTicker(symbol) {
 // === Portfolio Tracking Logic ===
 
 let activePortfolioId = null;
+let activePortfolioBaseCurrency = 'EUR';
 let commissionPlans = [];
 let portfoliosMap = new Map();
+let currentTransactions = [];
+let editingTransactionId = null;
 
 async function initPortfolioView() {
     await loadPortfolios();
@@ -6858,6 +6864,7 @@ function renderPortfolioSummary(data) {
     const summary = data.summary;
     const portfolio = data.portfolio;
     const curr = portfolio.base_currency;
+    activePortfolioBaseCurrency = curr;
 
     document.getElementById('portfolio-cash-display').textContent = `${portfolio.cash_balance.toFixed(2)} ${curr}`;
     document.getElementById('portfolio-value-display').textContent = `${summary.total_current_value.toFixed(2)} ${curr}`;
@@ -6886,7 +6893,7 @@ function renderPortfolioSummary(data) {
         
         tr.innerHTML = `
             <td><a href="#" class="ticker-link" onclick="event.stopPropagation(); event.preventDefault(); goToTicker('${pos.ticker}')">${pos.ticker}</a></td>
-            <td>${pos.quantity.toFixed(4)}</td>
+            <td>${pos.quantity.toFixed(0)}</td>
             <td>${pos.pmc.toFixed(2)}</td>
             <td>${pos.current_price.toFixed(2)}</td>
             <td>${pos.current_value.toFixed(2)} ${curr}</td>
@@ -6904,6 +6911,7 @@ async function loadTransactionsHistory() {
     try {
         const response = await fetch(`/portfolios/${activePortfolioId}/transactions/`);
         const transactions = await response.json();
+        currentTransactions = transactions;
         const tbody = document.getElementById('portfolio-history-body');
         tbody.innerHTML = '';
         transactions.forEach(t => {
@@ -6914,12 +6922,13 @@ async function loadTransactionsHistory() {
                 <td>${date}</td>
                 <td>${tickerHtml}</td>
                 <td><span class="badge" style="background: ${getTransTypeColor(t.type)}; border-radius: 4px; padding: 2px 6px; font-size: 0.75rem;">${t.type}</span></td>
-                <td>${t.quantity.toFixed(4)}</td>
+                <td>${t.quantity.toFixed(0)}</td>
                 <td>${t.price.toFixed(2)}</td>
                 <td>${t.instrument_currency}</td>
                 <td>${t.exchange_rate.toFixed(4)}</td>
                 <td>${t.commission_paid.toFixed(2)}</td>
                 <td>
+                    <button class="header-btn secondary small" style="margin-right: 4px;" onclick="openEditTransactionModal(${t.id})">Mod</button>
                     <button class="header-btn danger small" onclick="deleteTransaction(${t.id})">Del</button>
                 </td>
             `;
@@ -6996,6 +7005,10 @@ if (document.getElementById('manage-commission-plans-btn')) {
 }
 
 function closePositionModal(ticker, quantity, currentPrice) {
+    editingTransactionId = null;
+    const titleEl = document.getElementById('transaction-modal-title');
+    if (titleEl) titleEl.textContent = "Chiudi Posizione";
+
     const modal = document.getElementById('transaction-modal');
     modal.classList.remove('hidden');
     
@@ -7018,8 +7031,80 @@ function closePositionModal(ticker, quantity, currentPrice) {
 }
 window.closePositionModal = closePositionModal;
 
+function openEditTransactionModal(id) {
+    const t = currentTransactions.find(item => item.id === id);
+    if (!t) return;
+    
+    editingTransactionId = id;
+    
+    // Check if it is a cash deposit/withdrawal or a normal trade
+    if (t.type === 'DEPOSIT' || t.type === 'WITHDRAWAL') {
+        const titleEl = document.getElementById('cash-modal-title');
+        if (titleEl) titleEl.textContent = "Modifica Deposito / Prelievo";
+        
+        document.getElementById('cash-type').value = t.type;
+        document.getElementById('cash-amount').value = t.quantity;
+        
+        const d = new Date(t.date);
+        d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+        document.getElementById('cash-date').value = d.toISOString().slice(0, 16);
+        
+        document.getElementById('cash-modal').classList.remove('hidden');
+    } else {
+        const titleEl = document.getElementById('transaction-modal-title');
+        if (titleEl) titleEl.textContent = "Modifica Transazione";
+        
+        document.getElementById('trans-type').value = t.type;
+        document.getElementById('trans-ticker').value = t.ticker || '';
+        
+        const d = new Date(t.date);
+        d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+        document.getElementById('trans-date').value = d.toISOString().slice(0, 16);
+        
+        document.getElementById('trans-qty').value = t.quantity;
+        document.getElementById('trans-price').value = t.price;
+        document.getElementById('trans-currency').value = t.instrument_currency || 'EUR';
+        document.getElementById('trans-fx').value = t.exchange_rate;
+        document.getElementById('trans-commission-plan').value = t.commission_plan_id || '';
+        document.getElementById('trans-short-fee').value = t.short_borrow_fee_rate || 0;
+        
+        document.getElementById('trans-short-fee-row').style.display = t.type === 'SHORT' ? 'flex' : 'none';
+        
+        document.getElementById('transaction-modal').classList.remove('hidden');
+    }
+}
+async function updateAutomaticExchangeRate() {
+    if (!activePortfolioId) return;
+    const baseCurrency = activePortfolioBaseCurrency || 'EUR';
+    const instrumentCurrency = document.getElementById('trans-currency').value;
+    const dateVal = document.getElementById('trans-date').value;
+    
+    if (instrumentCurrency === baseCurrency) {
+        document.getElementById('trans-fx').value = "1.000000";
+        return;
+    }
+    
+    if (!dateVal) return;
+    
+    try {
+        const response = await fetch(`/fx_rate?base_currency=${baseCurrency}&instrument_currency=${instrumentCurrency}&date=${dateVal}`);
+        if (response.ok) {
+            const data = await response.json();
+            document.getElementById('trans-fx').value = data.rate.toFixed(6);
+        }
+    } catch (err) {
+        console.error("Error fetching FX rate:", err);
+    }
+}
+window.updateAutomaticExchangeRate = updateAutomaticExchangeRate;
+window.openEditTransactionModal = openEditTransactionModal;
+
 if (document.getElementById('add-transaction-btn')) {
     document.getElementById('add-transaction-btn').onclick = () => {
+        editingTransactionId = null;
+        const titleEl = document.getElementById('transaction-modal-title');
+        if (titleEl) titleEl.textContent = "Nuova Transazione";
+
         const modal = document.getElementById('transaction-modal');
         modal.classList.remove('hidden');
         document.getElementById('trans-type').value = 'BUY';
@@ -7028,11 +7113,17 @@ if (document.getElementById('add-transaction-btn')) {
         document.getElementById('trans-date').value = now.toISOString().slice(0, 16);
         if (activeTicker) document.getElementById('trans-ticker').value = activeTicker;
         document.getElementById('trans-short-fee-row').style.display = 'none';
+        
+        updateAutomaticExchangeRate();
     };
 }
 
 if (document.getElementById('close-position-top-btn')) {
     document.getElementById('close-position-top-btn').onclick = () => {
+        editingTransactionId = null;
+        const titleEl = document.getElementById('transaction-modal-title');
+        if (titleEl) titleEl.textContent = "Nuova Transazione";
+
         const modal = document.getElementById('transaction-modal');
         modal.classList.remove('hidden');
         document.getElementById('trans-type').value = 'SELL';
@@ -7041,11 +7132,17 @@ if (document.getElementById('close-position-top-btn')) {
         document.getElementById('trans-date').value = now.toISOString().slice(0, 16);
         if (activeTicker) document.getElementById('trans-ticker').value = activeTicker;
         document.getElementById('trans-short-fee-row').style.display = 'none';
+        
+        updateAutomaticExchangeRate();
     };
 }
 
 if (document.getElementById('add-cash-btn')) {
     document.getElementById('add-cash-btn').onclick = () => {
+        editingTransactionId = null;
+        const titleEl = document.getElementById('cash-modal-title');
+        if (titleEl) titleEl.textContent = "Deposita / Preleva Liquidità";
+
         const modal = document.getElementById('cash-modal');
         modal.classList.remove('hidden');
         const now = new Date();
@@ -7134,9 +7231,12 @@ if (document.getElementById('save-transaction-btn')) {
 
         if (!ticker || isNaN(quantity) || isNaN(price)) return alert("Compila tutti i campi obbligatori");
 
+        const url = editingTransactionId ? `/transactions/${editingTransactionId}` : `/portfolios/${activePortfolioId}/transactions/`;
+        const method = editingTransactionId ? 'PUT' : 'POST';
+
         try {
-            const response = await fetch(`/portfolios/${activePortfolioId}/transactions/`, {
-                method: 'POST',
+            const response = await fetch(url, {
+                method: method,
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     portfolio_id: parseInt(activePortfolioId),
@@ -7175,9 +7275,12 @@ if (document.getElementById('save-cash-btn')) {
 
         if (isNaN(amount)) return alert("Inserisci un importo");
 
+        const url = editingTransactionId ? `/transactions/${editingTransactionId}` : `/portfolios/${activePortfolioId}/transactions/`;
+        const method = editingTransactionId ? 'PUT' : 'POST';
+
         try {
-            const response = await fetch(`/portfolios/${activePortfolioId}/transactions/`, {
-                method: 'POST',
+            const response = await fetch(url, {
+                method: method,
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     portfolio_id: parseInt(activePortfolioId),
@@ -7188,6 +7291,9 @@ if (document.getElementById('save-cash-btn')) {
             if (response.ok) {
                 document.getElementById('cash-modal').classList.add('hidden');
                 refreshPortfolio();
+            } else {
+                const err = await response.json();
+                alert("Errore: " + JSON.stringify(err.detail));
             }
         } catch (err) {
             alert("Errore: " + err.message);

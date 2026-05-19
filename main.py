@@ -1039,9 +1039,81 @@ def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Transaction deleted"}
 
+@app.put("/transactions/{transaction_id}", response_model=schemas.Transaction)
+def update_transaction(transaction_id: int, transaction: schemas.TransactionCreate, db: Session = Depends(get_db)):
+    db_trans = db.query(db_mod.Transaction).filter(db_mod.Transaction.id == transaction_id).first()
+    if not db_trans:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+        
+    db_portfolio = db.query(db_mod.Portfolio).filter(db_mod.Portfolio.id == db_trans.portfolio_id).first()
+    if not db_portfolio:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+
+    # 1. Reverse old cash impact
+    if db_trans.type == "DEPOSIT":
+        db_portfolio.cash_balance -= db_trans.quantity
+    elif db_trans.type == "WITHDRAWAL":
+        db_portfolio.cash_balance += db_trans.quantity
+    else:
+        old_trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
+        if db_trans.type in ["BUY", "COVER"]:
+            db_portfolio.cash_balance += (old_trade_val + db_trans.commission_paid)
+        elif db_trans.type in ["SELL", "SHORT"]:
+            db_portfolio.cash_balance -= (old_trade_val - db_trans.commission_paid)
+
+    # 2. Calculate new commission if a plan is provided
+    commission_paid = 0.0
+    if transaction.commission_plan_id:
+        plan = db.query(db_mod.CommissionPlan).filter(db_mod.CommissionPlan.id == transaction.commission_plan_id).first()
+        if plan:
+            if plan.type == "absolute":
+                commission_paid = plan.fixed_fee
+            elif plan.type == "percentage":
+                trade_value_in_base = (transaction.price * transaction.quantity) * transaction.exchange_rate
+                calc_comm = trade_value_in_base * (plan.percentage / 100.0)
+                calc_comm += plan.fixed_fee
+                if plan.min_fee and calc_comm < plan.min_fee:
+                    calc_comm = plan.min_fee
+                if plan.max_fee and calc_comm > plan.max_fee:
+                    calc_comm = plan.max_fee
+                commission_paid = calc_comm
+
+    # 3. Update fields
+    db_trans.ticker = transaction.ticker
+    db_trans.type = transaction.type
+    db_trans.date = transaction.date
+    db_trans.quantity = transaction.quantity
+    db_trans.price = transaction.price
+    db_trans.instrument_currency = transaction.instrument_currency
+    db_trans.exchange_rate = transaction.exchange_rate
+    db_trans.commission_plan_id = transaction.commission_plan_id
+    db_trans.commission_paid = commission_paid
+    db_trans.short_borrow_fee_rate = transaction.short_borrow_fee_rate
+
+    # 4. Apply new cash impact
+    if db_trans.type == "DEPOSIT":
+        db_portfolio.cash_balance += db_trans.quantity
+    elif db_trans.type == "WITHDRAWAL":
+        db_portfolio.cash_balance -= db_trans.quantity
+    else:
+        new_trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
+        if db_trans.type in ["BUY", "COVER"]:
+            db_portfolio.cash_balance -= (new_trade_val + db_trans.commission_paid)
+        elif db_trans.type in ["SELL", "SHORT"]:
+            db_portfolio.cash_balance += (new_trade_val - db_trans.commission_paid)
+
+    db.commit()
+    db.refresh(db_trans)
+    return db_trans
+
 @app.get("/portfolios/{portfolio_id}/summary")
 def get_portfolio_summary(portfolio_id: int, db: Session = Depends(get_db)):
     return finance_logic.get_portfolio_summary(db, portfolio_id)
+
+@app.get("/fx_rate")
+def get_fx_rate(base_currency: str, instrument_currency: str, date: str):
+    rate = finance_logic.get_historical_fx_rate(instrument_currency, base_currency, date)
+    return {"rate": rate}
 
 # Serve Frontend
 static_dir = os.path.join(os.path.dirname(__file__), "static")
