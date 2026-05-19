@@ -1,0 +1,1 @@
+{"nodes": [{"id": "scratch_check_py", "label": "scratch_check.py", "file_type": "code", "source_file": "scratch_check.py", "source_location": "L1"}], "edges": [{"source": "scratch_check_py", "target": "bs4", "relation": "imports_from", "confidence": "EXTRACTED", "source_file": "scratch_check.py", "source_location": "L1", "weight": 1.0}], "raw_calls": []}

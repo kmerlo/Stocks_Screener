@@ -316,8 +316,8 @@ class CommissionPlan(CommissionPlanBase):
         from_attributes = True
 
 class TransactionBase(BaseModel):
-    portfolio_id: int
-    ticker: str
+    portfolio_id: Optional[int] = None
+    ticker: Optional[str] = None
     type: str
     date: datetime
     quantity: float

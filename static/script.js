@@ -990,6 +990,9 @@ async function updateChart(symbol) {
         // Load Fundamental Data
         loadFundamentalData(symbol);
 
+        // Render Transaction Markers
+        await renderTransactionMarkers(symbol);
+
         // Zoom logic: Show the last N bars based on the input field
         const visibleBarsInput = document.getElementById('visible-bars-input');
         const numBars = visibleBarsInput ? parseInt(visibleBarsInput.value) : 120;
@@ -1016,6 +1019,101 @@ async function updateChart(symbol) {
         }
     } catch (err) {
         console.error(`Error updating chart for ${symbol}:`, err);
+    }
+}
+
+async function renderTransactionMarkers(symbol) {
+    if (!priceSeries) return;
+    try {
+        const response = await fetch(`/transactions/ticker/${symbol}`);
+        if (!response.ok) {
+            priceSeries.setMarkers([]);
+            return;
+        }
+        const transactions = await response.json();
+        
+        // Exclude DEPOSIT and WITHDRAWAL since they aren't stock transactions
+        const tradeTrans = transactions.filter(t => ['BUY', 'SELL', 'SHORT', 'COVER'].includes(t.type));
+        if (tradeTrans.length === 0) {
+            priceSeries.setMarkers([]);
+            return;
+        }
+
+        const timeframe = document.getElementById('timeframe-select')?.value || 'D';
+        const grouped = {};
+        
+        tradeTrans.forEach(t => {
+            let timeKey = t.date.split('T')[0];
+            if (timeframe === 'W') {
+                const date = new Date(t.date);
+                const day = date.getDay();
+                const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+                const monday = new Date(new Date(date).setDate(diff));
+                timeKey = monday.toISOString().split('T')[0];
+            } else if (timeframe === 'M') {
+                const date = new Date(t.date);
+                const firstOfMonth = new Date(date.getFullYear(), date.getMonth(), 1);
+                timeKey = firstOfMonth.toISOString().split('T')[0];
+            }
+            
+            if (!grouped[timeKey]) {
+                grouped[timeKey] = [];
+            }
+            grouped[timeKey].push(t);
+        });
+
+        const markers = [];
+        Object.keys(grouped).forEach(timeKey => {
+            const list = grouped[timeKey];
+            if (list.length === 1) {
+                const t = list[0];
+                const isBuy = t.type === 'BUY' || t.type === 'COVER';
+                const position = isBuy ? 'belowBar' : 'aboveBar';
+                const shape = isBuy ? 'arrowUp' : 'arrowDown';
+                let color = '#2ea043'; // green for BUY/COVER
+                if (t.type === 'SELL') color = '#da3633'; // red for SELL
+                else if (t.type === 'SHORT') color = '#ff9800'; // orange for SHORT
+                else if (t.type === 'COVER') color = '#2196f3'; // blue for COVER
+
+                const portfolioName = portfoliosMap.get(t.portfolio_id) || `P${t.portfolio_id}`;
+                const text = `${t.type} ${t.quantity} @ ${t.price} (${portfolioName})`;
+                
+                markers.push({
+                    time: timeKey,
+                    position: position,
+                    color: color,
+                    shape: shape,
+                    text: text
+                });
+            } else {
+                const buyCount = list.filter(t => t.type === 'BUY' || t.type === 'COVER').length;
+                const sellCount = list.length - buyCount;
+                const position = buyCount >= sellCount ? 'belowBar' : 'aboveBar';
+                const color = '#9c27b0'; // purple for multiple
+                const shape = 'circle';
+                
+                const desc = list.map(t => {
+                    const portfolioName = portfoliosMap.get(t.portfolio_id) || `P${t.portfolio_id}`;
+                    return `${t.type} ${t.quantity} (${portfolioName})`;
+                }).join(' | ');
+                
+                markers.push({
+                    time: timeKey,
+                    position: position,
+                    color: color,
+                    shape: shape,
+                    text: `Trades: ${desc}`
+                });
+            }
+        });
+
+        // Sort markers by date ascending (Lightweight Charts requires markers to be sorted by time)
+        markers.sort((a, b) => a.time.localeCompare(b.time));
+        
+        priceSeries.setMarkers(markers);
+    } catch (err) {
+        console.error("Error loading transaction markers:", err);
+        priceSeries.setMarkers([]);
     }
 }
 
@@ -3778,7 +3876,20 @@ async function showTickerDetails(symbol) {
     activeTicker = symbol;
     activeTickerName = null; // Reset so updateChart() fetches the correct name for the new ticker
     const tickerSelect = document.getElementById('ticker-select');
-    if (tickerSelect) {
+    if (tickerSelect && symbol) {
+        let exists = false;
+        for (let i = 0; i < tickerSelect.options.length; i++) {
+            if (tickerSelect.options[i].value === symbol) {
+                exists = true;
+                break;
+            }
+        }
+        if (!exists) {
+            const opt = document.createElement('option');
+            opt.value = symbol;
+            opt.textContent = symbol;
+            tickerSelect.appendChild(opt);
+        }
         tickerSelect.value = symbol;
     }
 
@@ -6564,6 +6675,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 1. Critical functional loads
     await loadLists(); // Prioritized
     await loadIndices();
+    await loadPortfolios();
 
     // 2. Component initialization
     initApp();
@@ -6619,27 +6731,14 @@ async function addManualMapping() {
 }
 
 function goToTicker(symbol) {
-    activeView = 'monitoring';
-    activeTicker = symbol;
-    // Update sidebar UI
-    document.querySelectorAll('.nav-item').forEach(i => {
-        i.classList.toggle('active', i.dataset.view === 'monitoring');
-    });
-    // Update view containers
-    document.querySelectorAll('.view-container').forEach(v => {
-        v.classList.toggle('hidden', v.id !== 'monitoring-view');
-    });
-    // Update ticker select if possible
-    const ts = document.getElementById('ticker-select');
-    if (ts) ts.value = symbol;
-
-    updateChart(symbol);
+    showTickerDetails(symbol);
 }
 
 // === Portfolio Tracking Logic ===
 
 let activePortfolioId = null;
 let commissionPlans = [];
+let portfoliosMap = new Map();
 
 async function initPortfolioView() {
     await loadPortfolios();
@@ -6650,16 +6749,22 @@ async function loadPortfolios() {
     try {
         const response = await fetch('/portfolios/');
         const portfolios = await response.json();
-        const select = document.getElementById('portfolio-select');
-        const currentVal = select.value;
-        select.innerHTML = '<option value="">Seleziona Portafoglio...</option>';
+        portfoliosMap.clear();
         portfolios.forEach(p => {
-            const opt = document.createElement('option');
-            opt.value = p.id;
-            opt.textContent = `${p.name} (${p.base_currency})`;
-            select.appendChild(opt);
+            portfoliosMap.set(p.id, p.name);
         });
-        if (currentVal) select.value = currentVal;
+        const select = document.getElementById('portfolio-select');
+        if (select) {
+            const currentVal = select.value;
+            select.innerHTML = '<option value="">Seleziona Portafoglio...</option>';
+            portfolios.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = `${p.name} (${p.base_currency})`;
+                select.appendChild(opt);
+            });
+            if (currentVal) select.value = currentVal;
+        }
     } catch (err) {
         console.error("Error loading portfolios:", err);
     }
@@ -6780,12 +6885,15 @@ function renderPortfolioSummary(data) {
         const pnlColor = pnl >= 0 ? 'var(--up-color)' : 'var(--down-color)';
         
         tr.innerHTML = `
-            <td><strong>${pos.ticker}</strong></td>
+            <td><a href="#" class="ticker-link" onclick="event.stopPropagation(); event.preventDefault(); goToTicker('${pos.ticker}')">${pos.ticker}</a></td>
             <td>${pos.quantity.toFixed(4)}</td>
             <td>${pos.pmc.toFixed(2)}</td>
             <td>${pos.current_price.toFixed(2)}</td>
             <td>${pos.current_value.toFixed(2)} ${curr}</td>
             <td style="color: ${pnlColor}; font-weight: bold;">${pnl.toFixed(2)} ${curr}</td>
+            <td>
+                <button class="header-btn danger small" onclick="event.stopPropagation(); closePositionModal('${pos.ticker}', ${pos.quantity}, ${pos.current_price})">Chiudi</button>
+            </td>
         `;
         tbody.appendChild(tr);
     });
@@ -6801,9 +6909,10 @@ async function loadTransactionsHistory() {
         transactions.forEach(t => {
             const tr = document.createElement('tr');
             const date = new Date(t.date).toLocaleString();
+            const tickerHtml = t.ticker ? `<a href="#" class="ticker-link" onclick="event.preventDefault(); goToTicker('${t.ticker}')">${t.ticker}</a>` : '-';
             tr.innerHTML = `
                 <td>${date}</td>
-                <td>${t.ticker || '-'}</td>
+                <td>${tickerHtml}</td>
                 <td><span class="badge" style="background: ${getTransTypeColor(t.type)}; border-radius: 4px; padding: 2px 6px; font-size: 0.75rem;">${t.type}</span></td>
                 <td>${t.quantity.toFixed(4)}</td>
                 <td>${t.price.toFixed(2)}</td>
@@ -6886,16 +6995,52 @@ if (document.getElementById('manage-commission-plans-btn')) {
     };
 }
 
+function closePositionModal(ticker, quantity, currentPrice) {
+    const modal = document.getElementById('transaction-modal');
+    modal.classList.remove('hidden');
+    
+    const transType = document.getElementById('trans-type');
+    if (quantity > 0) {
+        transType.value = 'SELL';
+    } else {
+        transType.value = 'COVER';
+    }
+    
+    document.getElementById('trans-ticker').value = ticker;
+    document.getElementById('trans-qty').value = Math.abs(quantity);
+    document.getElementById('trans-price').value = currentPrice;
+    
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    document.getElementById('trans-date').value = now.toISOString().slice(0, 16);
+    
+    document.getElementById('trans-short-fee-row').style.display = 'none';
+}
+window.closePositionModal = closePositionModal;
+
 if (document.getElementById('add-transaction-btn')) {
     document.getElementById('add-transaction-btn').onclick = () => {
         const modal = document.getElementById('transaction-modal');
         modal.classList.remove('hidden');
-        // Set default date to now
+        document.getElementById('trans-type').value = 'BUY';
         const now = new Date();
         now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
         document.getElementById('trans-date').value = now.toISOString().slice(0, 16);
-        // If we have an active ticker on chart, prefill it
         if (activeTicker) document.getElementById('trans-ticker').value = activeTicker;
+        document.getElementById('trans-short-fee-row').style.display = 'none';
+    };
+}
+
+if (document.getElementById('close-position-top-btn')) {
+    document.getElementById('close-position-top-btn').onclick = () => {
+        const modal = document.getElementById('transaction-modal');
+        modal.classList.remove('hidden');
+        document.getElementById('trans-type').value = 'SELL';
+        const now = new Date();
+        now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+        document.getElementById('trans-date').value = now.toISOString().slice(0, 16);
+        if (activeTicker) document.getElementById('trans-ticker').value = activeTicker;
+        document.getElementById('trans-short-fee-row').style.display = 'none';
     };
 }
 
@@ -6994,6 +7139,7 @@ if (document.getElementById('save-transaction-btn')) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    portfolio_id: parseInt(activePortfolioId),
                     ticker, type, date, quantity, price, 
                     instrument_currency, exchange_rate, 
                     commission_plan_id: commission_plan_id ? parseInt(commission_plan_id) : null,
@@ -7034,7 +7180,8 @@ if (document.getElementById('save-cash-btn')) {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
-                    ticker: null, type, date, quantity: amount, price: 1.0, 
+                    portfolio_id: parseInt(activePortfolioId),
+                    ticker: 'CASH', type, date, quantity: amount, price: 1.0, 
                     instrument_currency: 'BASE', exchange_rate: 1.0
                 })
             });

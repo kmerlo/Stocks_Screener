@@ -1,0 +1,1 @@
+{"nodes": [{"id": "scratch_list_views_py", "label": "scratch_list_views.py", "file_type": "code", "source_file": "scratch_list_views.py", "source_location": "L1"}], "edges": [{"source": "scratch_list_views_py", "target": "re", "relation": "imports", "confidence": "EXTRACTED", "source_file": "scratch_list_views.py", "source_location": "L1", "weight": 1.0}], "raw_calls": []}

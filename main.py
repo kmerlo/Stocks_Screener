@@ -962,6 +962,11 @@ def delete_commission_plan(plan_id: int, db: Session = Depends(get_db)):
 def get_transactions(portfolio_id: int, db: Session = Depends(get_db)):
     return db.query(db_mod.Transaction).filter(db_mod.Transaction.portfolio_id == portfolio_id).order_by(db_mod.Transaction.date.desc()).all()
 
+@app.get("/transactions/ticker/{symbol}", response_model=List[schemas.Transaction])
+def get_ticker_transactions(symbol: str, db: Session = Depends(get_db)):
+    return db.query(db_mod.Transaction).filter(db_mod.Transaction.ticker == symbol).order_by(db_mod.Transaction.date.asc()).all()
+
+
 @app.post("/portfolios/{portfolio_id}/transactions/", response_model=schemas.Transaction)
 def create_transaction(portfolio_id: int, transaction: schemas.TransactionCreate, db: Session = Depends(get_db)):
     # Validate portfolio

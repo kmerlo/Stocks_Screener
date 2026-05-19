@@ -6,6 +6,8 @@
     --border-color: #30363d;
     --success-color: #2ea043;
     --danger-color: #da3633;
+    --up-color: var(--success-color);
+    --down-color: var(--danger-color);
     --sidebar-width: 280px;
     --header-height: 60px;
 }
