@@ -317,20 +317,35 @@ def list_indices():
 
 @app.post("/lists/{list_id}/import-index/{index_name}")
 def import_index_tickers(list_id: int, index_name: str, db: Session = Depends(get_db)):
-    ticker_data = finance_logic.get_tickers_by_index(index_name)
-    added = []
-    for entry in ticker_data:
-        symbol = entry["symbol"]
-        name = entry["name"]
-        existing = db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == list_id, db_mod.Ticker.symbol == symbol).first()
-        if not existing:
-            db_ticker = db_mod.Ticker(symbol=symbol, name=name, list_id=list_id)
-            db.add(db_ticker)
-            added.append(symbol)
-        elif name and existing.name != name:
-            existing.name = name
-    db.commit()
-    return {"message": f"Added {len(added)} tickers from {index_name}", "tickers": added}
+    try:
+        ticker_data = finance_logic.get_tickers_by_index(index_name)
+        added = []
+        skipped = []
+        for entry in ticker_data:
+            symbol = entry["symbol"]
+            name = entry["name"]
+            existing = db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == list_id, db_mod.Ticker.symbol == symbol).first()
+            if not existing:
+                try:
+                    db_ticker = db_mod.Ticker(symbol=symbol, name=name, list_id=list_id)
+                    db.add(db_ticker)
+                    db.flush()  # Catch constraint errors early
+                    added.append(symbol)
+                except Exception as e:
+                    logger.warning(f"Skipping {symbol}: {e}")
+                    db.rollback()
+                    skipped.append(symbol)
+            elif name and existing.name != name:
+                existing.name = name
+        db.commit()
+        msg = f"Added {len(added)} tickers from {index_name}"
+        if skipped:
+            msg += f" ({len(skipped)} skipped)"
+        return {"message": msg, "tickers": added}
+    except Exception as e:
+        logger.error(f"Error importing index {index_name}: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/lists/{list_id}/upload-csv/")
 async def upload_csv(list_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):

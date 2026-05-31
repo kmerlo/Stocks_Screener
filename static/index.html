@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="it">
 
 <head>
     <meta charset="UTF-8">
@@ -7,6 +7,10 @@
     <title>Financial Screener & Monitor</title>
     <link rel="stylesheet" href="style.css?v=2">
     <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css">
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr/dist/l10n/it.js"></script>
 </head>
 
 <body>
@@ -63,7 +67,7 @@
                     <button id="extend-history-btn" class="header-btn secondary">Estendi</button>
                     <button id="delete-ticker-data-btn" class="header-btn danger">Elimina</button>
                     <label style="margin-left: 10px; font-size: 0.8rem;">Dal:</label>
-                    <input type="date" id="delete-start-date" style="padding: 2px 5px; font-size: 0.8rem;">
+                    <input type="text" id="delete-start-date" style="padding: 2px 5px; font-size: 0.8rem; width: 110px;" placeholder="gg/mm/aaaa">
                     <button id="delete-data-from-date-btn" class="header-btn danger">Pulisci</button>
                     <label class="bulk-label">
                         <input type="checkbox" id="bulk-apply"> Lista
@@ -1010,10 +1014,12 @@
                             <tr>
                                 <th>Ticker</th>
                                 <th>Quantità</th>
-                                <th>PMC</th>
+                                <th>PMC (Base)</th>
+                                <th>PMC (Valuta)</th>
                                 <th>Prezzo Attuale</th>
                                 <th>Valore Corrente</th>
-                                <th>P&L (Unrealized)</th>
+                                <th>P&L (Base)</th>
+                                <th>P&L (Valuta)</th>
                                 <th>Azioni</th>
                             </tr>
                         </thead>
@@ -1258,7 +1264,7 @@
                 </div>
                 <div class="modal-form-row">
                     <label>Data:</label>
-                    <input type="datetime-local" id="trans-date" style="flex:1;">
+                    <input type="text" id="trans-date" style="flex:1;" placeholder="gg/mm/aaaa --:--">
                 </div>
                 <div class="modal-form-row">
                     <label>Quantità:</label>
@@ -1319,7 +1325,7 @@
                 </div>
                 <div class="modal-form-row">
                     <label>Data:</label>
-                    <input type="datetime-local" id="cash-date" style="flex:1;">
+                    <input type="text" id="cash-date" style="flex:1;" placeholder="gg/mm/aaaa --:--">
                 </div>
             </div>
             <div class="modal-footer">

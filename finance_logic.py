@@ -22,23 +22,27 @@ class FinanceLogic:
     def get_tickers_by_index(self, index_name):
         stocks = self.stock_data.get_stocks_by_index(index_name)
         tickers = []
+        seen_symbols = set()
         for s in stocks:
             name = s.get('name')
             # Extract symbols - pytickersymbols structure can be nested
+            # Prefer USD-currency Yahoo symbol (actual US listing),
+            # then fall back to the stock's canonical 'symbol' field
             symbols = s.get('symbols', [])
             yahoo_symbol = None
+            fallback_yahoo = None
             for sym_entry in symbols:
                 if 'yahoo' in sym_entry:
-                    yahoo_symbol = sym_entry['yahoo']
-                    break
+                    if fallback_yahoo is None:
+                        fallback_yahoo = sym_entry['yahoo']
+                    if sym_entry.get('currency') == 'USD':
+                        yahoo_symbol = sym_entry['yahoo']
+                        break
             
-            symbol = None
-            if yahoo_symbol:
-                symbol = yahoo_symbol
-            elif s.get('symbol'):
-                symbol = s.get('symbol')
+            symbol = yahoo_symbol or s.get('symbol') or fallback_yahoo
             
-            if symbol:
+            if symbol and symbol not in seen_symbols:
+                seen_symbols.add(symbol)
                 tickers.append({"symbol": symbol, "name": name})
         return tickers
 
@@ -1091,18 +1095,25 @@ class FinanceLogic:
                     "total_invested": 0.0,
                     "realized_pl": 0.0,
                     "short_costs": 0.0,
-                    "currency": t.instrument_currency
+                    "currency": t.instrument_currency,
+                    "pmc_instrument": 0.0,
+                    "total_invested_instrument": 0.0,
+                    "realized_pl_instrument": 0.0
                 }
             
             p = positions[sym]
             trade_qty = t.quantity
             trade_price = t.price * t.exchange_rate  # Convert to base currency
+            trade_price_instrument = t.price         # In instrument currency
             
             if t.type == "BUY":
                 new_qty = p["quantity"] + trade_qty
                 if p["quantity"] >= 0:
                     p["total_invested"] += (trade_price * trade_qty)
                     p["pmc"] = p["total_invested"] / new_qty if new_qty > 0 else 0
+                    
+                    p["total_invested_instrument"] += (trade_price_instrument * trade_qty)
+                    p["pmc_instrument"] = p["total_invested_instrument"] / new_qty if new_qty > 0 else 0
                 p["quantity"] = new_qty
             
             elif t.type == "SELL":
@@ -1110,6 +1121,10 @@ class FinanceLogic:
                     realized = (trade_price - p["pmc"]) * trade_qty
                     p["realized_pl"] += realized
                     p["total_invested"] -= (p["pmc"] * trade_qty)
+                    
+                    realized_instrument = (trade_price_instrument - p["pmc_instrument"]) * trade_qty
+                    p["realized_pl_instrument"] += realized_instrument
+                    p["total_invested_instrument"] -= (p["pmc_instrument"] * trade_qty)
                 p["quantity"] -= trade_qty
                 
             elif t.type == "SHORT":
@@ -1117,6 +1132,9 @@ class FinanceLogic:
                 if p["quantity"] <= 0:
                     p["total_invested"] += (trade_price * trade_qty)
                     p["pmc"] = p["total_invested"] / abs(new_qty) if new_qty < 0 else 0
+                    
+                    p["total_invested_instrument"] += (trade_price_instrument * trade_qty)
+                    p["pmc_instrument"] = p["total_invested_instrument"] / abs(new_qty) if new_qty < 0 else 0
                 p["quantity"] = new_qty
                 
             elif t.type == "COVER":
@@ -1124,6 +1142,10 @@ class FinanceLogic:
                     realized = (p["pmc"] - trade_price) * trade_qty
                     p["realized_pl"] += realized
                     p["total_invested"] -= (p["pmc"] * trade_qty)
+                    
+                    realized_instrument = (p["pmc_instrument"] - trade_price_instrument) * trade_qty
+                    p["realized_pl_instrument"] += realized_instrument
+                    p["total_invested_instrument"] -= (p["pmc_instrument"] * trade_qty)
                 p["quantity"] += trade_qty
 
         active_positions = []
@@ -1150,12 +1172,15 @@ class FinanceLogic:
                 
                 if p["quantity"] > 0:
                     unreal = (latest_price * latest_fx - p["pmc"]) * p["quantity"]
+                    unreal_instrument = (latest_price - p["pmc_instrument"]) * p["quantity"]
                 else:
                     unreal = (p["pmc"] - latest_price * latest_fx) * abs(p["quantity"])
+                    unreal_instrument = (p["pmc_instrument"] - latest_price) * abs(p["quantity"])
 
                 p["current_price"] = latest_price
                 p["current_value"] = current_val_base
                 p["unrealized_pl"] = unreal
+                p["unrealized_pl_instrument"] = unreal_instrument
                 
                 total_invested += p["total_invested"]
                 total_current_value += current_val_base

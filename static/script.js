@@ -5967,7 +5967,13 @@ async function renderAlarmsView() {
 
             let lastCheckStr = '-';
             if (al.triggered_at) {
-                lastCheckStr = new Date(al.triggered_at).toLocaleString();
+                const d = new Date(al.triggered_at);
+                const day = String(d.getDate()).padStart(2, '0');
+                const month = String(d.getMonth() + 1).padStart(2, '0');
+                const year = d.getFullYear();
+                const hours = String(d.getHours()).padStart(2, '0');
+                const minutes = String(d.getMinutes()).padStart(2, '0');
+                lastCheckStr = `${day}/${month}/${year} ${hours}:${minutes}`;
             } else if (al.last_checked_price) {
                 lastCheckStr = `Prezzo: ${al.last_checked_price.toFixed(2)}`;
             }
@@ -6682,6 +6688,39 @@ document.addEventListener('DOMContentLoaded', async () => {
     initInvestingLogic();
     setupMaintenanceTabs();
 
+    // Initialize flatpickr instances
+    if (typeof flatpickr !== 'undefined') {
+        flatpickr.localize(flatpickr.l10ns.it); // use Italian locale
+        
+        deleteStartDatePickr = flatpickr("#delete-start-date", {
+            dateFormat: "Y-m-d",
+            altInput: true,
+            altFormat: "d/m/Y",
+            allowInput: true
+        });
+
+        transDatePickr = flatpickr("#trans-date", {
+            enableTime: true,
+            dateFormat: "Y-m-dTH:i:S",
+            altInput: true,
+            altFormat: "d/m/Y H:i",
+            time_24hr: true,
+            allowInput: true,
+            onChange: function(selectedDates, dateStr, instance) {
+                updateAutomaticExchangeRate();
+            }
+        });
+
+        cashDatePickr = flatpickr("#cash-date", {
+            enableTime: true,
+            dateFormat: "Y-m-dTH:i:S",
+            altInput: true,
+            altFormat: "d/m/Y H:i",
+            time_24hr: true,
+            allowInput: true
+        });
+    }
+
     // 3. Global mapping listeners
     document.getElementById('refresh-mappings-btn')?.addEventListener('click', loadTickerMappings);
     document.getElementById('export-mapping-csv-btn')?.addEventListener('click', exportTickerMappings);
@@ -6745,6 +6784,9 @@ let commissionPlans = [];
 let portfoliosMap = new Map();
 let currentTransactions = [];
 let editingTransactionId = null;
+let transDatePickr = null;
+let cashDatePickr = null;
+let deleteStartDatePickr = null;
 
 async function initPortfolioView() {
     await loadPortfolios();
@@ -6891,13 +6933,20 @@ function renderPortfolioSummary(data) {
         const pnl = pos.unrealized_pl;
         const pnlColor = pnl >= 0 ? 'var(--up-color)' : 'var(--down-color)';
         
+        const pnlInstrument = pos.unrealized_pl_instrument ?? 0.0;
+        const pnlInstrumentColor = pnlInstrument >= 0 ? 'var(--up-color)' : 'var(--down-color)';
+        const instrumentCurrency = pos.currency || curr;
+        const pmcInstrument = pos.pmc_instrument ?? 0.0;
+        
         tr.innerHTML = `
             <td><a href="#" class="ticker-link" onclick="event.stopPropagation(); event.preventDefault(); goToTicker('${pos.ticker}')">${pos.ticker}</a></td>
             <td>${pos.quantity.toFixed(0)}</td>
-            <td>${pos.pmc.toFixed(2)}</td>
-            <td>${pos.current_price.toFixed(2)}</td>
+            <td>${pos.pmc.toFixed(2)} ${curr}</td>
+            <td>${pmcInstrument.toFixed(2)} ${instrumentCurrency}</td>
+            <td>${pos.current_price.toFixed(2)} ${instrumentCurrency}</td>
             <td>${pos.current_value.toFixed(2)} ${curr}</td>
             <td style="color: ${pnlColor}; font-weight: bold;">${pnl.toFixed(2)} ${curr}</td>
+            <td style="color: ${pnlInstrumentColor}; font-weight: bold;">${pnlInstrument.toFixed(2)} ${instrumentCurrency}</td>
             <td>
                 <button class="header-btn danger small" onclick="event.stopPropagation(); closePositionModal('${pos.ticker}', ${pos.quantity}, ${pos.current_price})">Chiudi</button>
             </td>
@@ -6916,10 +6965,16 @@ async function loadTransactionsHistory() {
         tbody.innerHTML = '';
         transactions.forEach(t => {
             const tr = document.createElement('tr');
-            const date = new Date(t.date).toLocaleString();
+            const d = new Date(t.date);
+            const day = String(d.getDate()).padStart(2, '0');
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const year = d.getFullYear();
+            const hours = String(d.getHours()).padStart(2, '0');
+            const minutes = String(d.getMinutes()).padStart(2, '0');
+            const formattedDate = `${day}/${month}/${year} ${hours}:${minutes}`;
             const tickerHtml = t.ticker ? `<a href="#" class="ticker-link" onclick="event.preventDefault(); goToTicker('${t.ticker}')">${t.ticker}</a>` : '-';
             tr.innerHTML = `
-                <td>${date}</td>
+                <td>${formattedDate}</td>
                 <td>${tickerHtml}</td>
                 <td><span class="badge" style="background: ${getTransTypeColor(t.type)}; border-radius: 4px; padding: 2px 6px; font-size: 0.75rem;">${t.type}</span></td>
                 <td>${t.quantity.toFixed(0)}</td>
@@ -7025,7 +7080,9 @@ function closePositionModal(ticker, quantity, currentPrice) {
     
     const now = new Date();
     now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-    document.getElementById('trans-date').value = now.toISOString().slice(0, 16);
+    const val = now.toISOString().slice(0, 16);
+    if (transDatePickr) transDatePickr.setDate(val, false);
+    else document.getElementById('trans-date').value = val;
     
     document.getElementById('trans-short-fee-row').style.display = 'none';
 }
@@ -7047,7 +7104,9 @@ function openEditTransactionModal(id) {
         
         const d = new Date(t.date);
         d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-        document.getElementById('cash-date').value = d.toISOString().slice(0, 16);
+        const val = d.toISOString().slice(0, 16);
+        if (cashDatePickr) cashDatePickr.setDate(val, false);
+        else document.getElementById('cash-date').value = val;
         
         document.getElementById('cash-modal').classList.remove('hidden');
     } else {
@@ -7059,7 +7118,9 @@ function openEditTransactionModal(id) {
         
         const d = new Date(t.date);
         d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-        document.getElementById('trans-date').value = d.toISOString().slice(0, 16);
+        const val = d.toISOString().slice(0, 16);
+        if (transDatePickr) transDatePickr.setDate(val, false);
+        else document.getElementById('trans-date').value = val;
         
         document.getElementById('trans-qty').value = t.quantity;
         document.getElementById('trans-price').value = t.price;
@@ -7110,7 +7171,9 @@ if (document.getElementById('add-transaction-btn')) {
         document.getElementById('trans-type').value = 'BUY';
         const now = new Date();
         now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-        document.getElementById('trans-date').value = now.toISOString().slice(0, 16);
+        const val = now.toISOString().slice(0, 16);
+        if (transDatePickr) transDatePickr.setDate(val, false);
+        else document.getElementById('trans-date').value = val;
         if (activeTicker) document.getElementById('trans-ticker').value = activeTicker;
         document.getElementById('trans-short-fee-row').style.display = 'none';
         
@@ -7129,7 +7192,9 @@ if (document.getElementById('close-position-top-btn')) {
         document.getElementById('trans-type').value = 'SELL';
         const now = new Date();
         now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-        document.getElementById('trans-date').value = now.toISOString().slice(0, 16);
+        const val = now.toISOString().slice(0, 16);
+        if (transDatePickr) transDatePickr.setDate(val, false);
+        else document.getElementById('trans-date').value = val;
         if (activeTicker) document.getElementById('trans-ticker').value = activeTicker;
         document.getElementById('trans-short-fee-row').style.display = 'none';
         
@@ -7147,7 +7212,9 @@ if (document.getElementById('add-cash-btn')) {
         modal.classList.remove('hidden');
         const now = new Date();
         now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-        document.getElementById('cash-date').value = now.toISOString().slice(0, 16);
+        const val = now.toISOString().slice(0, 16);
+        if (cashDatePickr) cashDatePickr.setDate(val, false);
+        else document.getElementById('cash-date').value = val;
     };
 }
 
