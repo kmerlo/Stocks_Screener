@@ -1017,10 +1017,23 @@
                                 <th>PMC (Base)</th>
                                 <th>PMC (Valuta)</th>
                                 <th>Prezzo Attuale</th>
-                                <th>Valore Corrente</th>
+                                <th>Valore C. (Base)</th>
+                                <th>Valore C. (Valuta)</th>
                                 <th>P&L (Base)</th>
                                 <th>P&L (Valuta)</th>
                                 <th>Azioni</th>
+                            </tr>
+                            <tr class="filter-row">
+                                <th><input type="text" placeholder="Filtra Ticker" id="pos-filter-ticker" class="portfolio-pos-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra Qtà" id="pos-filter-qty" class="portfolio-pos-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra PMC B." id="pos-filter-pmc-base" class="portfolio-pos-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra PMC V." id="pos-filter-pmc-val" class="portfolio-pos-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra Prezzo" id="pos-filter-price" class="portfolio-pos-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra Val. B." id="pos-filter-value-base" class="portfolio-pos-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra Val. V." id="pos-filter-value-val" class="portfolio-pos-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra P&L B." id="pos-filter-pnl-base" class="portfolio-pos-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra P&L V." id="pos-filter-pnl-val" class="portfolio-pos-filter" style="width:100%"></th>
+                                <th></th>
                             </tr>
                         </thead>
                         <tbody id="portfolio-positions-body">
@@ -1042,10 +1055,25 @@
                                 <th>Tipo</th>
                                 <th>Quantità</th>
                                 <th>Prezzo</th>
+                                <th>Controv. (Base)</th>
+                                <th>Controv. (Valuta)</th>
                                 <th>Valuta</th>
                                 <th>Cambio</th>
                                 <th>Commissioni</th>
                                 <th>Azioni</th>
+                            </tr>
+                            <tr class="filter-row">
+                                <th><input type="text" placeholder="Filtra Data" id="hist-filter-date" class="portfolio-hist-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra Ticker" id="hist-filter-ticker" class="portfolio-hist-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra Tipo" id="hist-filter-type" class="portfolio-hist-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra Qtà" id="hist-filter-qty" class="portfolio-hist-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra Prezzo" id="hist-filter-price" class="portfolio-hist-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra Controv. B." id="hist-filter-cv-base" class="portfolio-hist-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra Controv. V." id="hist-filter-cv-val" class="portfolio-hist-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra Valuta" id="hist-filter-currency" class="portfolio-hist-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra Cambio" id="hist-filter-fx" class="portfolio-hist-filter" style="width:100%"></th>
+                                <th><input type="text" placeholder="Filtra Comm." id="hist-filter-comm" class="portfolio-hist-filter" style="width:100%"></th>
+                                <th></th>
                             </tr>
                         </thead>
                         <tbody id="portfolio-history-body">
@@ -1374,7 +1402,7 @@
         </div>
 
 
-    <script src="script.js?v=2"></script>
+    <script src="script.js?v=4"></script>
 </body>
 
 </html>

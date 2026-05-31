@@ -6922,10 +6922,43 @@ function renderPortfolioSummary(data) {
     reEl.textContent = `${rePnl.toFixed(2)} ${curr}`;
     reEl.style.color = rePnl >= 0 ? 'var(--up-color)' : 'var(--down-color)';
 
-    // Positions Table
+    currentPortfolioPositions = data.positions;
+    renderPortfolioPositions();
+}
+
+function renderPortfolioPositions() {
     const tbody = document.getElementById('portfolio-positions-body');
+    if (!tbody) return;
     tbody.innerHTML = '';
-    data.positions.forEach(pos => {
+    
+    const curr = activePortfolioBaseCurrency;
+    
+    const filters = {
+        ticker: document.getElementById('pos-filter-ticker')?.value.toLowerCase() || '',
+        qty: document.getElementById('pos-filter-qty')?.value.toLowerCase() || '',
+        pmcBase: document.getElementById('pos-filter-pmc-base')?.value.toLowerCase() || '',
+        pmcVal: document.getElementById('pos-filter-pmc-val')?.value.toLowerCase() || '',
+        price: document.getElementById('pos-filter-price')?.value.toLowerCase() || '',
+        valueBase: document.getElementById('pos-filter-value-base')?.value.toLowerCase() || '',
+        valueVal: document.getElementById('pos-filter-value-val')?.value.toLowerCase() || '',
+        pnlBase: document.getElementById('pos-filter-pnl-base')?.value.toLowerCase() || '',
+        pnlVal: document.getElementById('pos-filter-pnl-val')?.value.toLowerCase() || ''
+    };
+
+    const filtered = currentPortfolioPositions.filter(pos => {
+        if (filters.ticker && (!pos.ticker || !pos.ticker.toLowerCase().includes(filters.ticker))) return false;
+        if (filters.qty && (pos.quantity == null || !pos.quantity.toFixed(0).includes(filters.qty))) return false;
+        if (filters.pmcBase && (pos.pmc == null || !pos.pmc.toFixed(2).includes(filters.pmcBase))) return false;
+        if (filters.pmcVal && !(pos.pmc_instrument ?? 0).toFixed(2).includes(filters.pmcVal)) return false;
+        if (filters.price && (pos.current_price == null || !pos.current_price.toFixed(2).includes(filters.price))) return false;
+        if (filters.valueBase && (pos.current_value == null || !pos.current_value.toFixed(2).includes(filters.valueBase))) return false;
+        if (filters.valueVal && (pos.current_value_instrument == null || !pos.current_value_instrument.toFixed(2).includes(filters.valueVal))) return false;
+        if (filters.pnlBase && (pos.unrealized_pl == null || !pos.unrealized_pl.toFixed(2).includes(filters.pnlBase))) return false;
+        if (filters.pnlVal && !(pos.unrealized_pl_instrument ?? 0).toFixed(2).includes(filters.pnlVal)) return false;
+        return true;
+    });
+
+    filtered.forEach(pos => {
         const tr = document.createElement('tr');
         tr.style.cursor = 'pointer';
         tr.onclick = () => goToTicker(pos.ticker);
@@ -6945,6 +6978,7 @@ function renderPortfolioSummary(data) {
             <td>${pmcInstrument.toFixed(2)} ${instrumentCurrency}</td>
             <td>${pos.current_price.toFixed(2)} ${instrumentCurrency}</td>
             <td>${pos.current_value.toFixed(2)} ${curr}</td>
+            <td>${(pos.current_value_instrument ?? 0).toFixed(2)} ${instrumentCurrency}</td>
             <td style="color: ${pnlColor}; font-weight: bold;">${pnl.toFixed(2)} ${curr}</td>
             <td style="color: ${pnlInstrumentColor}; font-weight: bold;">${pnlInstrument.toFixed(2)} ${instrumentCurrency}</td>
             <td>
@@ -6961,9 +6995,56 @@ async function loadTransactionsHistory() {
         const response = await fetch(`/portfolios/${activePortfolioId}/transactions/`);
         const transactions = await response.json();
         currentTransactions = transactions;
-        const tbody = document.getElementById('portfolio-history-body');
-        tbody.innerHTML = '';
-        transactions.forEach(t => {
+        renderPortfolioHistory();
+    } catch (err) {
+        console.error("Error loading history:", err);
+    }
+}
+
+function renderPortfolioHistory() {
+    const tbody = document.getElementById('portfolio-history-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    
+    const filters = {
+        date: document.getElementById('hist-filter-date')?.value.toLowerCase() || '',
+        ticker: document.getElementById('hist-filter-ticker')?.value.toLowerCase() || '',
+        type: document.getElementById('hist-filter-type')?.value.toLowerCase() || '',
+        qty: document.getElementById('hist-filter-qty')?.value.toLowerCase() || '',
+        price: document.getElementById('hist-filter-price')?.value.toLowerCase() || '',
+        cvBase: document.getElementById('hist-filter-cv-base')?.value.toLowerCase() || '',
+        cvVal: document.getElementById('hist-filter-cv-val')?.value.toLowerCase() || '',
+        currency: document.getElementById('hist-filter-currency')?.value.toLowerCase() || '',
+        fx: document.getElementById('hist-filter-fx')?.value.toLowerCase() || '',
+        comm: document.getElementById('hist-filter-comm')?.value.toLowerCase() || ''
+    };
+
+    const filtered = currentTransactions.filter(t => {
+        const d = new Date(t.date);
+        const day = String(d.getDate()).padStart(2, '0');
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const year = d.getFullYear();
+        const hours = String(d.getHours()).padStart(2, '0');
+        const minutes = String(d.getMinutes()).padStart(2, '0');
+        const formattedDate = `${day}/${month}/${year} ${hours}:${minutes}`;
+
+        const cvVal = (t.price || 0) * (t.quantity || 0);
+        const cvBase = cvVal * (t.exchange_rate || 1.0);
+
+        if (filters.date && !formattedDate.toLowerCase().includes(filters.date)) return false;
+        if (filters.ticker && (!t.ticker || !t.ticker.toLowerCase().includes(filters.ticker))) return false;
+        if (filters.type && (!t.type || !t.type.toLowerCase().includes(filters.type))) return false;
+        if (filters.qty && (t.quantity == null || !t.quantity.toFixed(0).includes(filters.qty))) return false;
+        if (filters.price && (t.price == null || !t.price.toFixed(4).includes(filters.price))) return false;
+        if (filters.cvBase && !cvBase.toFixed(2).includes(filters.cvBase)) return false;
+        if (filters.cvVal && !cvVal.toFixed(2).includes(filters.cvVal)) return false;
+        if (filters.currency && (!t.instrument_currency || !t.instrument_currency.toLowerCase().includes(filters.currency))) return false;
+        if (filters.fx && (t.exchange_rate == null || !t.exchange_rate.toFixed(4).includes(filters.fx))) return false;
+        if (filters.comm && (t.commission == null || !t.commission.toFixed(2).includes(filters.comm))) return false;
+        return true;
+    });
+
+    filtered.forEach(t => {
             const tr = document.createElement('tr');
             const d = new Date(t.date);
             const day = String(d.getDate()).padStart(2, '0');
@@ -6973,12 +7054,17 @@ async function loadTransactionsHistory() {
             const minutes = String(d.getMinutes()).padStart(2, '0');
             const formattedDate = `${day}/${month}/${year} ${hours}:${minutes}`;
             const tickerHtml = t.ticker ? `<a href="#" class="ticker-link" onclick="event.preventDefault(); goToTicker('${t.ticker}')">${t.ticker}</a>` : '-';
+            const cvVal = (t.price || 0) * (t.quantity || 0);
+            const cvBase = cvVal * (t.exchange_rate || 1.0);
+            
             tr.innerHTML = `
                 <td>${formattedDate}</td>
                 <td>${tickerHtml}</td>
                 <td><span class="badge" style="background: ${getTransTypeColor(t.type)}; border-radius: 4px; padding: 2px 6px; font-size: 0.75rem;">${t.type}</span></td>
                 <td>${t.quantity.toFixed(0)}</td>
                 <td>${t.price.toFixed(2)}</td>
+                <td>${cvBase.toFixed(2)}</td>
+                <td>${cvVal.toFixed(2)}</td>
                 <td>${t.instrument_currency}</td>
                 <td>${t.exchange_rate.toFixed(4)}</td>
                 <td>${t.commission_paid.toFixed(2)}</td>
@@ -6989,9 +7075,6 @@ async function loadTransactionsHistory() {
             `;
             tbody.appendChild(tr);
         });
-    } catch (err) {
-        console.error("Error loading transactions:", err);
-    }
 }
 
 function getTransTypeColor(type) {
@@ -7367,5 +7450,12 @@ if (document.getElementById('save-cash-btn')) {
         }
     };
 }
+
+document.querySelectorAll('.portfolio-pos-filter').forEach(input => {
+    input.addEventListener('input', renderPortfolioPositions);
+});
+document.querySelectorAll('.portfolio-hist-filter').forEach(input => {
+    input.addEventListener('input', renderPortfolioHistory);
+});
 
 console.log("[script.js] Script execution reached end.");

@@ -1177,8 +1177,10 @@ class FinanceLogic:
                     unreal = (p["pmc"] - latest_price * latest_fx) * abs(p["quantity"])
                     unreal_instrument = (p["pmc_instrument"] - latest_price) * abs(p["quantity"])
 
+                current_val_instrument = latest_price * p["quantity"]
                 p["current_price"] = latest_price
                 p["current_value"] = current_val_base
+                p["current_value_instrument"] = current_val_instrument
                 p["unrealized_pl"] = unreal
                 p["unrealized_pl_instrument"] = unreal_instrument
                 
