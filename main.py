@@ -825,6 +825,13 @@ def get_gsheet_data(spreadsheet_name: str = "Investing"):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/tickers/{symbol}/fundamentals/historical", response_model=Optional[schemas.HistoricalFundamentalData])
+def get_historical_ticker_fundamentals(symbol: str, date: str, db: Session = Depends(get_db)):
+    fund = finance_logic.get_historical_fundamental_data(db, symbol, date)
+    if not fund:
+        raise HTTPException(status_code=404, detail=f"Historical fundamental data not found for {symbol} on date {date}")
+    return fund
+
 @app.get("/tickers/{symbol}/fundamentals", response_model=Optional[schemas.FundamentalData])
 def get_ticker_fundamentals(symbol: str, db: Session = Depends(get_db)):
     return finance_logic.get_fundamental_data(db, symbol)
