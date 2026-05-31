@@ -263,6 +263,40 @@ class FundamentalData(FundamentalDataBase):
     class Config:
         from_attributes = True
 
+class HistoricalFundamentalDataBase(BaseModel):
+    symbol: str
+    quarter_date: datetime
+    market_cap: Optional[float] = None
+    pe_ratio: Optional[float] = None
+    forward_pe: Optional[float] = None
+    ps_ratio: Optional[float] = None
+    pb_ratio: Optional[float] = None
+    dividend_yield: Optional[float] = None
+    beta: Optional[float] = None
+    total_revenue: Optional[float] = None
+    revenue_growth: Optional[float] = None
+    gross_margins: Optional[float] = None
+    ebitda_margins: Optional[float] = None
+    operating_margins: Optional[float] = None
+    profit_margins: Optional[float] = None
+    total_cash: Optional[float] = None
+    total_debt: Optional[float] = None
+    current_ratio: Optional[float] = None
+    shares: Optional[float] = None
+    ttm_eps: Optional[float] = None
+    book_value: Optional[float] = None
+    sector: Optional[str] = None
+    industry: Optional[str] = None
+    long_business_summary: Optional[str] = None
+    last_updated: Optional[datetime] = None
+
+class HistoricalFundamentalData(HistoricalFundamentalDataBase):
+    id: int
+    raw_info: Optional[str] = None
+
+    class Config:
+        from_attributes = True
+
 class FundamentalUpdate(BaseModel):
     symbol: str
 

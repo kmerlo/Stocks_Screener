@@ -156,6 +156,50 @@ class FundamentalData(Base):
     last_updated = Column(DateTime, default=func.now(), onupdate=func.now())
     raw_info = Column(String, nullable=True) # Full JSON dump for future use
 
+class HistoricalFundamentalData(Base):
+    __tablename__ = "historical_fundamental_data"
+
+    id = Column(Integer, primary_key=True, index=True)
+    symbol = Column(String, index=True)
+    quarter_date = Column(DateTime, index=True) # Ending date of the reported quarter, e.g. 2024-03-31
+    
+    # Key Metrics
+    market_cap = Column(Float, nullable=True)
+    pe_ratio = Column(Float, nullable=True)
+    forward_pe = Column(Float, nullable=True)
+    ps_ratio = Column(Float, nullable=True)
+    pb_ratio = Column(Float, nullable=True)
+    dividend_yield = Column(Float, nullable=True)
+    beta = Column(Float, nullable=True)
+    
+    # Financials
+    total_revenue = Column(Float, nullable=True)
+    revenue_growth = Column(Float, nullable=True)
+    gross_margins = Column(Float, nullable=True)
+    ebitda_margins = Column(Float, nullable=True)
+    operating_margins = Column(Float, nullable=True)
+    profit_margins = Column(Float, nullable=True)
+    
+    # Cash/Debt
+    total_cash = Column(Float, nullable=True)
+    total_debt = Column(Float, nullable=True)
+    current_ratio = Column(Float, nullable=True)
+    
+    # Core Financial Inputs for dynamic recalculation
+    shares = Column(Float, nullable=True)
+    ttm_eps = Column(Float, nullable=True)
+    book_value = Column(Float, nullable=True)
+    
+    # Metadata
+    sector = Column(String, nullable=True)
+    industry = Column(String, nullable=True)
+    long_business_summary = Column(String, nullable=True)
+    
+    last_updated = Column(DateTime, default=func.now(), onupdate=func.now())
+    raw_info = Column(String, nullable=True) # Full JSON dump of raw quarterly data
+
+    __table_args__ = (UniqueConstraint('symbol', 'quarter_date', name='_symbol_quarter_uc'),)
+
 class TickerMapping(Base):
     __tablename__ = "ticker_mappings"
 

@@ -532,6 +532,15 @@ function initChart() {
         requestAnimationFrame(redrawAllDrawings);
     });
 
+    mainChart.subscribeClick(async param => {
+        if (!param || !param.time) return;
+        const dateStr = timeToStr(param.time);
+        if (activeTicker) {
+            console.log("Chart clicked at:", dateStr, "for ticker:", activeTicker);
+            await loadHistoricalFundamentals(activeTicker, dateStr);
+        }
+    });
+
     // Handle price scale changes (Y-axis zoom/pan)
     // Defer to avoid potential initialization hang in some browser/library versions
     setTimeout(() => {
@@ -6126,6 +6135,8 @@ async function loadFundamentalData(symbol) {
         }
         document.getElementById('fundamental-ticker-fullname').textContent = activeTickerName || symbol;
         document.getElementById('fundamental-ticker-symbol').textContent = symbol;
+        const qDateEl = document.getElementById('fundamental-quarter-date');
+        if (qDateEl) qDateEl.textContent = "(Trimestre: Oggi)";
 
         const lastUpdatedEl = document.getElementById('fundamental-last-updated');
         if (lastUpdatedEl && lastUpdated) {
@@ -6170,6 +6181,89 @@ async function loadFundamentalData(symbol) {
         document.getElementById('fundamental-summary').textContent = data.long_business_summary || '';
     } catch (err) {
         console.error("Error loading fundamentals:", err);
+    }
+}
+
+async function loadHistoricalFundamentals(symbol, date) {
+    if (!symbol || !date) return;
+    console.log("Loading historical fundamentals for:", symbol, "on date:", date);
+    try {
+        const section = document.getElementById('ticker-fundamentals-section');
+        if (!section) return;
+
+        // Display loading indicator
+        document.getElementById('fundamentals-container').innerHTML = '<p style="padding: 20px; color: var(--text-secondary);">Recupero dati fondamentali storici in corso...</p>';
+        document.getElementById('fundamental-summary').textContent = '';
+        
+        // Expand the section if it was hidden
+        const isCollapsed = section.classList.contains('hidden');
+        const icon = document.getElementById('fundamentals-toggle-icon');
+        if (isCollapsed) {
+            section.classList.remove('hidden');
+            if (icon) icon.textContent = '▲';
+            localStorage.setItem('fundamentals_side_collapsed', 'false');
+        }
+
+        const data = await apiCall(`/tickers/${symbol}/fundamentals/historical?date=${date}`);
+        console.log("Historical fundamentals data received:", data);
+
+        document.getElementById('fundamental-ticker-fullname').textContent = activeTickerName || symbol;
+        document.getElementById('fundamental-ticker-symbol').textContent = symbol;
+
+        // Set quarter date element
+        const qDateEl = document.getElementById('fundamental-quarter-date');
+        if (qDateEl && data.quarter_date) {
+            const qDate = new Date(data.quarter_date);
+            const qStr = qDate.toLocaleDateString('it-IT', { year: 'numeric', month: '2-digit', day: '2-digit' });
+            let qNum = Math.floor(qDate.getMonth() / 3) + 1;
+            qDateEl.textContent = `(Trimestre: Q${qNum} ${qDate.getFullYear()} - ${qStr})`;
+        }
+
+        const lastUpdatedEl = document.getElementById('fundamental-last-updated');
+        if (lastUpdatedEl && data.last_updated) {
+            const lastUpdated = new Date(data.last_updated);
+            const day = String(lastUpdated.getDate()).padStart(2, '0');
+            const month = String(lastUpdated.getMonth() + 1).padStart(2, '0');
+            const year = lastUpdated.getFullYear();
+            const hours = String(lastUpdated.getHours()).padStart(2, '0');
+            const minutes = String(lastUpdated.getMinutes()).padStart(2, '0');
+            const formattedDate = `${day}/${month}/${year} ${hours}:${minutes}`;
+            lastUpdatedEl.textContent = "Ultimo calcolo cache: " + formattedDate;
+        }
+
+        const container = document.getElementById('fundamentals-container');
+        container.innerHTML = '';
+
+        const metrics = [
+            { label: 'Market Cap', value: formatLargeNumber(data.market_cap) },
+            { label: 'P/E Ratio', value: data.pe_ratio ? data.pe_ratio.toFixed(2) : 'N/A' },
+            { label: 'Forward P/E', value: data.forward_pe ? data.forward_pe.toFixed(2) : 'N/A' },
+            { label: 'P/S Ratio', value: data.ps_ratio ? data.ps_ratio.toFixed(2) : 'N/A' },
+            { label: 'P/B Ratio', value: data.pb_ratio ? data.pb_ratio.toFixed(2) : 'N/A' },
+            { label: 'Div. Yield', value: data.dividend_yield ? (data.dividend_yield * 100).toFixed(2) + '%' : 'N/A' },
+            { label: 'Beta', value: data.beta ? data.beta.toFixed(2) : 'N/A' },
+            { label: 'Revenue', value: formatLargeNumber(data.total_revenue) },
+            { label: 'Rev. Growth (YoY)', value: data.revenue_growth ? (data.revenue_growth * 100).toFixed(2) + '%' : 'N/A' },
+            { label: 'Profit Margin', value: data.profit_margins ? (data.profit_margins * 100).toFixed(2) + '%' : 'N/A' },
+            { label: 'Operating Margin', value: data.operating_margins ? (data.operating_margins * 100).toFixed(2) + '%' : 'N/A' },
+            { label: 'Cash', value: formatLargeNumber(data.total_cash) },
+            { label: 'Debt', value: formatLargeNumber(data.total_debt) },
+            { label: 'Current Ratio', value: data.current_ratio ? data.current_ratio.toFixed(2) : 'N/A' },
+            { label: 'Sector', value: data.sector || 'N/A' },
+            { label: 'Industry', value: data.industry || 'N/A' }
+        ];
+
+        metrics.forEach(m => {
+            const div = document.createElement('div');
+            div.className = 'fundamental-item';
+            div.innerHTML = `<span class="fundamental-label">${m.label}</span><span class="fundamental-value">${m.value}</span>`;
+            container.appendChild(div);
+        });
+
+        document.getElementById('fundamental-summary').textContent = data.long_business_summary || '';
+    } catch (err) {
+        console.error("Error loading historical fundamentals:", err);
+        document.getElementById('fundamentals-container').innerHTML = `<p style="padding: 20px; color: var(--danger-color);">Errore nel recupero dei dati storici: ${err.message}</p>`;
     }
 }
 
