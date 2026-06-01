@@ -6082,7 +6082,285 @@ async function saveAlarm() {
 
 // --- Fundamental Data ---
 
-async function loadFundamentalData(symbol) {
+function formatFloat(val) {
+    if (val === null || val === undefined || val === '') return 'N/A';
+    const num = parseFloat(val);
+    if (isNaN(num)) return 'N/A';
+    return num.toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+function formatPercent(val) {
+    if (val === null || val === undefined || val === '') return 'N/A';
+    const num = parseFloat(val);
+    if (isNaN(num)) return 'N/A';
+    return (num * 100).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
+}
+
+function formatDateVal(val) {
+    if (val === null || val === undefined || val === '') return 'N/A';
+    try {
+        let dateObj;
+        if (typeof val === 'number') {
+            dateObj = new Date(val * 1000);
+        } else {
+            dateObj = new Date(val);
+        }
+        if (isNaN(dateObj.getTime())) return 'N/A';
+        const day = String(dateObj.getDate()).padStart(2, '0');
+        const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+        const year = dateObj.getFullYear();
+        return `${day}/${month}/${year}`;
+    } catch (e) {
+        return 'N/A';
+    }
+}
+
+function renderKeyStatisticsDashboard(data, container) {
+    if (!container) return;
+    container.innerHTML = '';
+    
+    let rawInfo = {};
+    if (data && data.raw_info) {
+        try {
+            rawInfo = JSON.parse(data.raw_info);
+        } catch (e) {
+            console.error("Error parsing raw_info:", e);
+        }
+    }
+
+    // Helper functions for fallback values
+    const getVal = (rawKey, fallbackVal) => {
+        if (rawInfo && rawInfo[rawKey] !== undefined && rawInfo[rawKey] !== null) {
+            return rawInfo[rawKey];
+        }
+        return fallbackVal;
+    };
+
+    // Formatters
+    const fmtLarge = (val) => formatLargeNumber(val);
+    const fmtFloat = (val) => formatFloat(val);
+    const fmtPercent = (val) => formatPercent(val);
+    const fmtDate = (val) => formatDateVal(val);
+
+    // Specific getter for dividend yield to handle current percent vs historical ratio
+    const getDivYield = () => {
+        if (rawInfo && rawInfo.dividendYield !== undefined && rawInfo.dividendYield !== null) {
+            return parseFloat(rawInfo.dividendYield).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
+        }
+        if (data && data.dividend_yield !== undefined && data.dividend_yield !== null) {
+            return (parseFloat(data.dividend_yield) * 100).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
+        }
+        return 'N/A';
+    };
+
+    const getDebtToEquity = () => {
+        const val = getVal('debtToEquity');
+        if (val !== undefined && val !== null && val !== '') {
+            return parseFloat(val).toLocaleString('it-IT', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + '%';
+        }
+        return 'N/A';
+    };
+
+    const getExDivDate = () => {
+        const val = getVal('exDividendDate') || getVal('lastDividendDate');
+        return fmtDate(val);
+    };
+
+    // 1. MISURE DI VALUTAZIONE
+    const valuationRows = [
+        { label: 'Market Cap (Capitalizzazione)', value: fmtLarge(getVal('marketCap', data.market_cap)) },
+        { label: 'Enterprise Value (Valore Impresa)', value: fmtLarge(getVal('enterpriseValue')) },
+        { label: 'Trailing P/E (P/E Corrente)', value: fmtFloat(getVal('trailingPE', data.pe_ratio)) },
+        { label: 'Forward P/E (P/E Prospettico)', value: fmtFloat(getVal('forwardPE', data.forward_pe)) },
+        { label: 'PEG Ratio (5 anni previsti)', value: fmtFloat(getVal('pegRatio')) },
+        { label: 'Price/Sales (Prezzo/Vendite ttm)', value: fmtFloat(getVal('priceToSalesTrailing12Months', data.ps_ratio)) },
+        { label: 'Price/Book (Prezzo/Libro mrq)', value: fmtFloat(getVal('priceToBook', data.pb_ratio)) },
+        { label: 'EV/Revenue (EV/Fatturato)', value: fmtFloat(getVal('enterpriseToRevenue')) },
+        { label: 'EV/EBITDA (EV/EBITDA)', value: fmtFloat(getVal('enterpriseToEbitda')) }
+    ];
+
+    // 2. HIGHLIGHT FINANZIARI
+    const highlightRows = [
+        { isSubheading: true, label: 'Redditività ed Efficacia' },
+        { label: 'Profit Margin (Margine Profitto)', value: fmtPercent(getVal('profitMargins', data.profit_margins)) },
+        { label: 'Operating Margin (Margine Operativo ttm)', value: fmtPercent(getVal('operatingMargins', data.operating_margins)) },
+        { label: 'Return on Assets (ROA ttm)', value: fmtPercent(getVal('returnOnAssets')) },
+        { label: 'Return on Equity (ROE ttm)', value: fmtPercent(getVal('returnOnEquity')) },
+        
+        { isSubheading: true, label: 'Conto Economico' },
+        { label: 'Revenue (Fatturato ttm)', value: fmtLarge(getVal('totalRevenue', data.total_revenue)) },
+        { label: 'Revenue Per Share (Fatturato p. Azione)', value: fmtFloat(getVal('revenuePerShare')) },
+        { label: 'Quarterly Revenue Growth (YoY)', value: fmtPercent(getVal('revenueGrowth', data.revenue_growth)) },
+        { label: 'Gross Profit (Utile Lordo ttm)', value: fmtLarge(getVal('grossProfits')) },
+        { label: 'Gross Margin (Margine Lordo)', value: fmtPercent(getVal('grossMargins', data.gross_margins)) },
+        { label: 'EBITDA (ttm)', value: fmtLarge(getVal('ebitda')) },
+        { label: 'Net Income (Utile Netto ttm)', value: fmtLarge(getVal('netIncomeToCommon')) },
+        { label: 'Diluted EPS (EPS Diluito ttm)', value: fmtFloat(getVal('trailingEps', data.ttm_eps)) },
+        { label: 'Quarterly Earnings Growth (YoY)', value: fmtPercent(getVal('earningsQuarterlyGrowth')) },
+        
+        { isSubheading: true, label: 'Stato Patrimoniale' },
+        { label: 'Total Cash (Cassa Totale mrq)', value: fmtLarge(getVal('totalCash', data.total_cash)) },
+        { label: 'Total Cash Per Share (Cassa p. Azione)', value: fmtFloat(getVal('totalCashPerShare')) },
+        { label: 'Total Debt (Debito Totale mrq)', value: fmtLarge(getVal('totalDebt', data.total_debt)) },
+        { label: 'Debt/Equity (Debito/Capitale mrq)', value: getDebtToEquity() },
+        { label: 'Quick Ratio (mrq)', value: fmtFloat(getVal('quickRatio')) },
+        { label: 'Current Ratio (mrq)', value: fmtFloat(getVal('currentRatio', data.current_ratio)) },
+        { label: 'Book Value Per Share (mrq)', value: fmtFloat(getVal('bookValue', data.book_value)) },
+        
+        { isSubheading: true, label: 'Flussi di Cassa' },
+        { label: 'Operating Cash Flow (ttm)', value: fmtLarge(getVal('operatingCashflow')) },
+        { label: 'Levered Free Cash Flow (ttm)', value: fmtLarge(getVal('freeCashflow')) }
+    ];
+
+    // 3. INFORMAZIONI DI TRADING
+    const tradingRows = [
+        { isSubheading: true, label: 'Storico dei Prezzi' },
+        { label: 'Beta (3 anni mensile)', value: fmtFloat(getVal('beta', data.beta)) },
+        { label: '52-Week Change (Var. 52 Sett.)', value: fmtPercent(getVal('fiftyTwoWeekChangePercent', getVal('52WeekChange'))) },
+        { label: 'S&P500 52-Week Change', value: fmtPercent(getVal('SandP52WeekChange')) },
+        { label: '52-Week High (Massimo 52 Sett.)', value: fmtFloat(getVal('fiftyTwoWeekHigh')) },
+        { label: '52-Week Low (Minimo 52 Sett.)', value: fmtFloat(getVal('fiftyTwoWeekLow')) },
+        { label: '50-Day Moving Average', value: fmtFloat(getVal('fiftyDayAverage')) },
+        { label: '200-Day Moving Average', value: fmtFloat(getVal('twoHundredDayAverage')) },
+        
+        { isSubheading: true, label: 'Statistiche delle Azioni' },
+        { label: 'Avg Volume (3 mesi)', value: fmtLarge(getVal('averageVolume', getVal('averageDailyVolume3Month'))) },
+        { label: 'Avg Volume (10 giorni)', value: fmtLarge(getVal('averageVolume10days', getVal('averageDailyVolume10Day'))) },
+        { label: 'Shares Outstanding (Azioni Emesse)', value: fmtLarge(getVal('sharesOutstanding', data.shares)) },
+        { label: 'Float (Azioni Flottanti)', value: fmtLarge(getVal('floatShares')) },
+        { label: '% Insiders (% Poss. da Insider)', value: fmtPercent(getVal('heldPercentInsiders')) },
+        { label: '% Institutions (% Poss. da Istituz.)', value: fmtPercent(getVal('heldPercentInstitutions')) },
+        { label: 'Shares Short (Azioni Shortate)', value: fmtLarge(getVal('sharesShort')) },
+        { label: 'Short Ratio', value: fmtFloat(getVal('shortRatio')) },
+        { label: 'Short % of Float', value: fmtPercent(getVal('shortPercentOfFloat')) },
+        { label: 'Shares Short (Prior Month)', value: fmtLarge(getVal('sharesShortPriorMonth')) },
+        
+        { isSubheading: true, label: 'Dividendi e Frazionamenti' },
+        { label: 'Forward Annual Dividend Rate', value: fmtFloat(getVal('dividendRate')) },
+        { label: 'Forward Annual Dividend Yield', value: getDivYield() },
+        { label: 'Trailing Annual Dividend Rate', value: fmtFloat(getVal('trailingAnnualDividendRate')) },
+        { label: 'Trailing Annual Dividend Yield', value: fmtPercent(getVal('trailingAnnualDividendYield')) },
+        { label: '5 Year Avg Dividend Yield', value: fmtPercent(getVal('fiveYearAvgDividendYield')) },
+        { label: 'Payout Ratio', value: fmtPercent(getVal('payoutRatio')) },
+        { label: 'Dividend Date (Data Dividendo)', value: fmtDate(getVal('dividendDate')) },
+        { label: 'Ex-Dividend Date (Data Ex-Div)', value: getExDivDate() },
+        { label: 'Last Split Factor (Fattore Split)', value: getVal('lastSplitFactor') || 'N/A' },
+        { label: 'Last Split Date (Data Split)', value: fmtDate(getVal('lastSplitDate')) }
+    ];
+
+    const generateTableHtml = (rows) => {
+        let html = '<table class="fundamentals-table">';
+        rows.forEach(r => {
+            if (r.isSubheading) {
+                html += `
+                    <tr class="subheading-row">
+                        <td colspan="2" class="fundamentals-table-subheading">${r.label}</td>
+                    </tr>
+                `;
+            } else {
+                html += `
+                    <tr>
+                        <td class="label-col">${r.label}</td>
+                        <td class="value-col">${r.value}</td>
+                    </tr>
+                `;
+            }
+        });
+        html += '</table>';
+        return html;
+    };
+
+    const dashboardHtml = `
+        <div class="fundamentals-sections-wrapper" style="width: 100%;">
+            <div class="fundamentals-section-card">
+                <h4>Misure di Valutazione</h4>
+                ${generateTableHtml(valuationRows)}
+            </div>
+            <div class="fundamentals-section-card">
+                <h4>Highlight Finanziari</h4>
+                ${generateTableHtml(highlightRows)}
+            </div>
+            <div class="fundamentals-section-card">
+                <h4>Informazioni di Trading</h4>
+                ${generateTableHtml(tradingRows)}
+            </div>
+        </div>
+    `;
+
+    container.innerHTML = dashboardHtml;
+
+    // Wire up search input
+    const searchInput = document.getElementById('fundamentals-search-input');
+    if (searchInput) {
+        searchInput.oninput = () => {
+            const query = searchInput.value.toLowerCase().trim();
+            const cards = container.querySelectorAll('.fundamentals-section-card');
+            
+            cards.forEach(card => {
+                const rows = card.querySelectorAll('.fundamentals-table tr');
+                let cardHasVisibleRows = false;
+                
+                rows.forEach(row => {
+                    if (row.classList.contains('subheading-row')) return;
+                    
+                    const label = row.querySelector('.label-col')?.textContent.toLowerCase() || '';
+                    const value = row.querySelector('.value-col')?.textContent.toLowerCase() || '';
+                    const match = label.includes(query) || value.includes(query);
+                    
+                    if (match) {
+                        row.classList.remove('hidden-row');
+                        cardHasVisibleRows = true;
+                    } else {
+                        row.classList.add('hidden-row');
+                    }
+                });
+                
+                // Show/hide subheadings dynamically based on matching items below them
+                let currentSubheadingRow = null;
+                let subheadingHasVisibleData = false;
+                
+                rows.forEach(row => {
+                    if (row.classList.contains('subheading-row')) {
+                        if (currentSubheadingRow) {
+                            if (subheadingHasVisibleData) {
+                                currentSubheadingRow.classList.remove('hidden-row');
+                            } else {
+                                currentSubheadingRow.classList.add('hidden-row');
+                            }
+                        }
+                        currentSubheadingRow = row;
+                        subheadingHasVisibleData = false;
+                    } else {
+                        if (!row.classList.contains('hidden-row')) {
+                            subheadingHasVisibleData = true;
+                        }
+                    }
+                });
+                
+                if (currentSubheadingRow) {
+                    if (subheadingHasVisibleData) {
+                        currentSubheadingRow.classList.remove('hidden-row');
+                    } else {
+                        currentSubheadingRow.classList.add('hidden-row');
+                    }
+                }
+                
+                if (query !== '' && !cardHasVisibleRows) {
+                    card.style.display = 'none';
+                } else {
+                    card.style.display = 'block';
+                }
+            });
+        };
+        
+        // Trigger initial filtering if search input has a value
+        if (searchInput.value) {
+            searchInput.oninput();
+        }
+    }
+}
+
+async function loadFundamentalData(symbol, forceUpdate = true) {
     if (!symbol) return;
     console.log("Loading fundamentals for:", symbol);
     try {
@@ -6100,12 +6378,12 @@ async function loadFundamentalData(symbol) {
         const isCollapsed = localStorage.getItem('fundamentals_side_collapsed') === 'true';
         const icon = document.getElementById('fundamentals-toggle-icon');
 
-        if (!data) {
-            console.log("No fundamental data in DB, triggering update...");
+        if (forceUpdate && (!data || !data.raw_info)) {
+            console.log("No fundamental data or raw_info in DB, triggering update...");
             
             if (autoReopen || !isCollapsed) {
                 section.classList.remove('hidden');
-            if (icon) icon.textContent = '▲';
+                if (icon) icon.textContent = '▲';
                 if (autoReopen && isCollapsed) localStorage.setItem('fundamentals_side_collapsed', 'false');
             }
             
@@ -6115,12 +6393,18 @@ async function loadFundamentalData(symbol) {
             return;
         }
 
+        if (!data) {
+            // If data is null and forceUpdate was false
+            document.getElementById('fundamentals-container').innerHTML = '<p style="padding: 20px; color: var(--text-secondary);">Nessun dato fondamentale disponibile.</p>';
+            return;
+        }
+
         // Check freshness: if older than 24h, update in background
         const lastUpdated = data.last_updated ? new Date(data.last_updated) : null;
         const now = new Date();
         const isOld = !lastUpdated || (now - lastUpdated) > (24 * 60 * 60 * 1000);
 
-        if (isOld) {
+        if (isOld && forceUpdate) {
             console.log("Fundamental data is old, updating in background...");
             // Non-blocking update
             apiCall(`/tickers/${symbol}/fundamentals/update`, 'POST')
@@ -6150,33 +6434,7 @@ async function loadFundamentalData(symbol) {
         }
 
         const container = document.getElementById('fundamentals-container');
-        container.innerHTML = '';
-
-        const metrics = [
-            { label: 'Market Cap', value: formatLargeNumber(data.market_cap) },
-            { label: 'P/E Ratio', value: data.pe_ratio ? data.pe_ratio.toFixed(2) : 'N/A' },
-            { label: 'Forward P/E', value: data.forward_pe ? data.forward_pe.toFixed(2) : 'N/A' },
-            { label: 'P/S Ratio', value: data.ps_ratio ? data.ps_ratio.toFixed(2) : 'N/A' },
-            { label: 'P/B Ratio', value: data.pb_ratio ? data.pb_ratio.toFixed(2) : 'N/A' },
-            { label: 'Div. Yield', value: data.dividend_yield ? (data.dividend_yield * 100).toFixed(2) + '%' : 'N/A' },
-            { label: 'Beta', value: data.beta ? data.beta.toFixed(2) : 'N/A' },
-            { label: 'Revenue', value: formatLargeNumber(data.total_revenue) },
-            { label: 'Rev. Growth', value: data.revenue_growth ? (data.revenue_growth * 100).toFixed(2) + '%' : 'N/A' },
-            { label: 'Profit Margin', value: data.profit_margins ? (data.profit_margins * 100).toFixed(2) + '%' : 'N/A' },
-            { label: 'Operating Margin', value: data.operating_margins ? (data.operating_margins * 100).toFixed(2) + '%' : 'N/A' },
-            { label: 'Cash', value: formatLargeNumber(data.total_cash) },
-            { label: 'Debt', value: formatLargeNumber(data.total_debt) },
-            { label: 'Current Ratio', value: data.current_ratio ? data.current_ratio.toFixed(2) : 'N/A' },
-            { label: 'Sector', value: data.sector || 'N/A' },
-            { label: 'Industry', value: data.industry || 'N/A' }
-        ];
-
-        metrics.forEach(m => {
-            const div = document.createElement('div');
-            div.className = 'fundamental-item';
-            div.innerHTML = `<span class="fundamental-label">${m.label}</span><span class="fundamental-value">${m.value}</span>`;
-            container.appendChild(div);
-        });
+        renderKeyStatisticsDashboard(data, container);
 
         document.getElementById('fundamental-summary').textContent = data.long_business_summary || '';
     } catch (err) {
@@ -6232,33 +6490,7 @@ async function loadHistoricalFundamentals(symbol, date) {
         }
 
         const container = document.getElementById('fundamentals-container');
-        container.innerHTML = '';
-
-        const metrics = [
-            { label: 'Market Cap', value: formatLargeNumber(data.market_cap) },
-            { label: 'P/E Ratio', value: data.pe_ratio ? data.pe_ratio.toFixed(2) : 'N/A' },
-            { label: 'Forward P/E', value: data.forward_pe ? data.forward_pe.toFixed(2) : 'N/A' },
-            { label: 'P/S Ratio', value: data.ps_ratio ? data.ps_ratio.toFixed(2) : 'N/A' },
-            { label: 'P/B Ratio', value: data.pb_ratio ? data.pb_ratio.toFixed(2) : 'N/A' },
-            { label: 'Div. Yield', value: data.dividend_yield ? (data.dividend_yield * 100).toFixed(2) + '%' : 'N/A' },
-            { label: 'Beta', value: data.beta ? data.beta.toFixed(2) : 'N/A' },
-            { label: 'Revenue', value: formatLargeNumber(data.total_revenue) },
-            { label: 'Rev. Growth (YoY)', value: data.revenue_growth ? (data.revenue_growth * 100).toFixed(2) + '%' : 'N/A' },
-            { label: 'Profit Margin', value: data.profit_margins ? (data.profit_margins * 100).toFixed(2) + '%' : 'N/A' },
-            { label: 'Operating Margin', value: data.operating_margins ? (data.operating_margins * 100).toFixed(2) + '%' : 'N/A' },
-            { label: 'Cash', value: formatLargeNumber(data.total_cash) },
-            { label: 'Debt', value: formatLargeNumber(data.total_debt) },
-            { label: 'Current Ratio', value: data.current_ratio ? data.current_ratio.toFixed(2) : 'N/A' },
-            { label: 'Sector', value: data.sector || 'N/A' },
-            { label: 'Industry', value: data.industry || 'N/A' }
-        ];
-
-        metrics.forEach(m => {
-            const div = document.createElement('div');
-            div.className = 'fundamental-item';
-            div.innerHTML = `<span class="fundamental-label">${m.label}</span><span class="fundamental-value">${m.value}</span>`;
-            container.appendChild(div);
-        });
+        renderKeyStatisticsDashboard(data, container);
 
         document.getElementById('fundamental-summary').textContent = data.long_business_summary || '';
     } catch (err) {
@@ -6303,7 +6535,7 @@ async function updateFundamentalsManually(symbol) {
             if (activeTicker) await loadFundamentalData(activeTicker);
         } else {
             await apiCall(`/tickers/${targetSymbol}/fundamentals/update`, 'POST');
-            await loadFundamentalData(targetSymbol);
+            await loadFundamentalData(targetSymbol, false);
         }
     } catch (err) {
         alert("Errore aggiornamento: " + err.message);
