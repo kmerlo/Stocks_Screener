@@ -189,9 +189,33 @@ header {
 .view-container {
     flex: 1;
     padding: 20px;
-    overflow-y: auto;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
+}
+#monitoring-view {
+    overflow-y: auto;
+}
+#screening-view {
+    min-height: 0;
+    overflow: hidden;
+}
+#screening-view .tab-content {
+    display: none;
+}
+#screening-view .tab-content:not(.hidden) {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
+}
+#screening-fundamental-sheet:not(.hidden) .card:last-child {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: hidden;
 }
 
 .hidden {
@@ -742,6 +766,45 @@ th {
 
 .sort-row th:hover {
     background: rgba(255, 255, 255, 0.05);
+}
+
+#fundamental-table-container {
+    flex: 1;
+    overflow: auto;
+    min-height: 0;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+#fundamental-screening-table {
+    border-collapse: separate;
+    border-spacing: 0;
+}
+#fundamental-screening-table thead {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+}
+#fundamental-screening-table td,
+#fundamental-screening-table th {
+    white-space: nowrap;
+    min-width: 90px;
+}
+#fundamental-screening-table th:first-child,
+#fundamental-screening-table td:first-child {
+    min-width: 70px;
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    background: var(--card-bg);
+}
+#fundamental-screening-table .sort-row th:first-child {
+    z-index: 5;
+}
+#fundamental-screening-table th input[type="text"],
+#fundamental-screening-table th input[type="number"] {
+    width: 60px;
+    font-size: 11px;
+    padding: 2px 4px;
 }
 
 /* --- Drawing Tools Styles --- */

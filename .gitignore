@@ -23,3 +23,11 @@ error_page.html
 *.log
 python-to-gsheet-*.json
 
+#Graphfy
+./graphfy-out/cache
+
+#codegraph
+.codegraph
+
+#agent
+.agent
