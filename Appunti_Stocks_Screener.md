@@ -36,10 +36,10 @@ Il mio interesse sta crescendo sempre più nel campo finanziario e ho deciso di 
 
 ```
 Stocks_Screener/
-├── main.py                  # Entry point FastAPI – tutti gli endpoint REST
+├── main.py                  # Entry point FastAPI – tutti gli endpoint REST (~2000 righe)
 ├── database.py              # Modelli SQLAlchemy (ORM) e configurazione DB
 ├── schemas.py               # Schemi Pydantic per validazione request/response
-├── finance_logic.py         # Logica business: download dati, calcolo indicatori, screening
+├── finance_logic.py         # Logica business: download dati, calcolo indicatori, screening, portafoglio, FX
 ├── investing_scraper.py     # Scraper Selenium per Investing.com (portfolio/CSV)
 ├── pyproject.toml           # Dipendenze e configurazione progetto (uv)
 ├── finance_app.db           # Database SQLite (generato a runtime)
@@ -100,8 +100,12 @@ Usa **SQLAlchemy ORM** con SQLite (`finance_app.db`). Le tabelle principali sono
 | `drawings`            | Disegni persistenti sui grafici (linee, fibonacci, ecc.)            |
 | `alarms`              | Allarmi di prezzo associati ai disegni                              |
 | `fundamental_data`    | Dati fondamentali (P/E, Market Cap, Revenue, ecc.) per ticker       |
+| `historical_fundamental_data` | Snapshot fondamentali storici associati a una data trimestrale (per far variare i dati col giorno selezionato sul grafico) |
 | `ticker_mappings`     | Mappatura Yahoo → Investing.com per ogni ticker                     |
 | `portfolio_urls`      | URL salvati per i portafogli di Investing.com                       |
+| `portfolio`           | Portafogli di investimento con nome, valuta base, e cash            |
+| `commission_plans`    | Piani commissionali (commissioni fisse/percentuali per broker)      |
+| `transaction`         | Transazioni di portafoglio (acquisti, vendite, dividendi, versamenti) con supporto multi-valuta |
 
 ### 4.3 Schemi Pydantic (`schemas.py`)
 
@@ -112,8 +116,11 @@ Definisce i modelli di validazione per ogni endpoint:
 - **Screening**: `ScreeningRequest`, `DynamicScreeningRequest`, `ModularScreeningResult`
 - **Disegni**: `DrawingBase/Create/Sync`, `DrawingPoint`, con `field_validator` per parsare i punti da stringa JSON
 - **Allarmi**: `AlarmBase/Create/Alarm/AlarmOut`
-- **Fondamentali**: `FundamentalDataBase/FundamentalData`
+- **Fondamentali**: `FundamentalDataBase/FundamentalData`, `FundamentalUpdate`, `HistoricalFundamentalDataBase/HistoricalFundamentalData`
 - **Mappature**: `TickerMappingBase/Create/TickerMapping`
+- **Portafoglio**: `PortfolioBase/Create/Portfolio`, `PortfolioURLBase/Create/PortfolioURL`
+- **Transazioni**: `TransactionBase/Create/Transaction`
+- **Commissioni**: `CommissionPlanBase/Create/CommissionPlan`
 
 ### 4.4 Logica Finanziaria (`finance_logic.py`)
 
@@ -131,7 +138,9 @@ Classe singleton `FinanceLogic` (istanziata come `finance_logic` a fine modulo).
 #### Calcolo Indicatori
 
 - **`calculate_indicators()`**: Calcola indicatori tecnici usando **pandas-ta-classic** (`df.ta.sma()`, `df.ta.rsi()`, ecc.). Supporta: SMA, EMA, RSI, MACD, Bollinger Bands, Stoch, Donchian, Supertrend, ATR, CCI, ROC, BBP, Volume, ecc.
+- **`calculate_ma_slope()`**: Calcola la pendenza (slope) di una media mobile su un numero di periodi.
 - Supporta **timeframe multipli**: Daily (D), Weekly (W), Monthly (M) tramite resampling del DataFrame.
+- **`generate_indicator_key()`**: Genera chiave univoca per ogni combinazione indicatore/parametri/timeframe (usata per caching).
 
 #### Screening
 
@@ -150,7 +159,15 @@ Classe singleton `FinanceLogic` (istanziata come `finance_logic` a fine modulo).
 #### Dati Fondamentali
 
 - **`update_fundamental_data()`**: Scarica dati fondamentali da yfinance (Market Cap, P/E, Revenue, Margins, Debt, ecc.) e li salva/aggiorna nel DB.
+- **`get_fundamental_data()`**: Legge fondamentali correnti dal DB.
+- **`get_historical_fundamental_data()`**: Cerca il record fondamentale più vicino a una data specifica (basato su `quarter_date`). Fondamentale per società con calendari fiscali non standard (es. CRM).
 - **`update_list_fundamentals()`**: Aggiornamento batch per tutti i ticker di una lista.
+
+#### Gestione Portafoglio e Tassi di Cambio
+
+- **`get_portfolio_summary()`**: Calcola il riepilogo di un portafoglio: posizioni aperte, PMC in valuta base e strumento, P&L realizzato/non realizzato, controvalori, liquidità residua.
+- **`get_fx_rate()`**: Recupera il tasso di cambio corrente tra due valute (es. USD→EUR) tramite yfinance.
+- **`get_historical_fx_rate()`**: Recupera il tasso di cambio storico a una data specifica.
 
 ### 4.5 Scraper Investing.com (`investing_scraper.py`)
 
@@ -220,8 +237,37 @@ Modulo Selenium che:
 |--------|---------------------------------------------|-------------------------------------|
 | GET    | `/tickers/{symbol}/fundamentals`            | Leggi fondamentali dal DB           |
 | POST   | `/tickers/{symbol}/fundamentals/update`     | Aggiorna da yfinance                |
+| GET    | `/tickers/{symbol}/fundamentals/historical` | Leggi fondamentali storici per data (quarter_date) |
 | GET    | `/lists/{list_id}/fundamentals`             | Fondamentali per lista              |
 | POST   | `/lists/{list_id}/fundamentals/update`      | Aggiorna fondamentali per lista     |
+
+### Ticker Mappings (Yahoo ↔ Investing)
+
+| Metodo | Endpoint                         | Descrizione                            |
+|--------|----------------------------------|----------------------------------------|
+| GET    | `/tickers/mapping/`              | Elenco mappature                       |
+| POST   | `/tickers/mapping/`              | Crea mappatura                         |
+| DELETE | `/tickers/mapping/{mapping_id}`  | Elimina mappatura                      |
+| POST   | `/tickers/mapping/import/`       | Importa mappature da CSV               |
+| GET    | `/tickers/mapping/export/`       | Esporta mappature in CSV               |
+
+### Portafoglio
+
+| Metodo | Endpoint                                    | Descrizione                                |
+|--------|---------------------------------------------|--------------------------------------------|
+| GET    | `/portfolios/`                              | Elenco portafogli                          |
+| POST   | `/portfolios/`                              | Crea nuovo portafoglio (nome + valuta base)|
+| DELETE | `/portfolios/{portfolio_id}`                | Elimina portafoglio                        |
+| GET    | `/portfolios/{portfolio_id}/summary`        | Riepilogo: cash, valore posizioni, P&L     |
+| GET    | `/portfolios/{portfolio_id}/transactions/`  | Transazioni di un portafoglio              |
+| POST   | `/portfolios/{portfolio_id}/transactions/`  | Crea transazione (BUY/SELL/SHORT/COVER/DEPOSIT/WITHDRAWAL) |
+| GET    | `/transactions/ticker/{symbol}`             | Transazioni per ticker (per markers sul grafico) |
+| PUT    | `/transactions/{transaction_id}`            | Modifica transazione                       |
+| DELETE | `/transactions/{transaction_id}`            | Elimina transazione                        |
+| GET    | `/commission_plans/`                        | Elenco piani commissionali                 |
+| POST   | `/commission_plans/`                        | Crea piano commissionale                   |
+| DELETE | `/commission_plans/{plan_id}`               | Elimina piano commissionale                |
+| GET    | `/fx_rate`                                  | Tasso di cambio (base, strumento, data)    |
 
 **Gestione Trimestri Variabili**
 
@@ -229,14 +275,6 @@ Modulo Selenium che:
 - Il DB `fundamental_data` è stato aggiornato per includere la colonna `quarter_date`.
 - Le API ora restituiscono i dati fondamentali associati alla data di chiusura corretta, evitando le precedenti date fittizie (es. 2025-12-31).
 - La funzione `get_historical_fundamental_data` in `finance_logic.py` seleziona il record più vicino alla data richiesta, garantendo coerenza per società con calendari fiscali non standard (es. CRM).
-
-### Ticker Mappings (Yahoo ↔ Investing)
-
-| Metodo | Endpoint                         | Descrizione                            |
-|--------|----------------------------------|----------------------------------------|
-| GET/POST/DELETE | `/tickers/mapping/...` | CRUD mappature ticker                  |
-| POST   | `/tickers/mapping/import/`       | Importa mappature da CSV               |
-| GET    | `/tickers/mapping/export/`       | Esporta mappature in CSV               |
 
 ### Google Sheets & Investing.com
 
@@ -270,26 +308,39 @@ Modulo Selenium che:
 | Vista               | Descrizione                                                           |
 |----------------------|-----------------------------------------------------------------------|
 | **Grafico**          | Grafico interattivo con candele/linea, indicatori, strumenti di disegno, fondamentali sotto il grafico |
+| **Portafoglio**      | Gestione completa portafoglio: creazione, posizioni aperte, storico transazioni, piani commissionali, riepilogo P&L con supporto multi-valuta |
 | **Ticker Lists**     | Gestione liste: creazione, importazione (CSV, indice, manuale), esportazione |
 | **Screening**        | Screening multi-foglio con tab: Base, ROC Analysis, Fundamentals, fogli custom |
 | **Dati Storici**     | Tabella dati OHLCV grezzi dal database, ordinabili per data           |
 | **Allarmi**          | Elenco allarmi attivi e scattati                                      |
-| **Manutenzione DB**  | Pulizia indicatori orfani, mappature Yahoo↔Investing, VACUUM          |
-| **Google Sheet**     | Visualizzazione dati da Google Spreadsheet                            |
-| **Investing.com**    | Scraping/importazione portfolio da Investing.com                      |
+| **Manutenzione DB**  | Due tab: (1) Indicatori Orfani + Svuota Prezzi / VACUUM, (2) Gestione Mappature Yahoo↔Investing con import/export CSV |
+| **Google Sheet**     | Visualizzazione dati da Google Spreadsheet con supporto multi-foglio tramite tab dinamici |
+| **Investing.com**    | Scraping/importazione portfolio da Investing.com (3 modalità: web scraping, CSV web, CSV locale) |
+| **Configurazione**   | Preferenze utente: riapertura automatica fondamentali al cambio ticker |
 
 ### 6.3 Componenti Frontend Principali
 
 - **Grafico**: Usa la libreria **Lightweight Charts** (TradingView, v4.2.3) per rendering candele/linea con supporto a multi-pane (sottografici per RSI, MACD, ecc.)
 - **Layer di Disegno**: Un `<canvas>` HTML sovrapposto al grafico gestisce tutti gli strumenti di disegno:
-  - Linee: orizzontale, verticale, trend, ray, estesa, freccia
-  - Forme: rettangolo, cerchio, triangolo, polilinea, pennello
-  - Fibonacci: ritracciamento, estensione
-  - Canali: regressione, parallelo
-  - Annotazioni: testo, callout, etichetta prezzo
+  - **Strumenti base**: cursore (mano), modifica, gomma, elimina tutto
+  - **Linee**: orizzontale, verticale, trend, ray, estesa, freccia
+  - **Forme**: rettangolo, cerchio, triangolo, polilinea, pennello
+  - **Fibonacci**: ritracciamento, estensione
+  - **Canali**: regressione, parallelo
+  - **Annotazioni**: testo, callout, etichetta prezzo
+  - **Controlli stile**: selezione colore, slider spessore linea (1-6px)
 - **Template Indicatori**: Salvataggio/caricamento di configurazioni di indicatori
 - **Screening**: Tabelle con ordinamento per colonna, filtri min/max su ogni colonna ROC o fondamentale, e possibilità di salvare sotto-liste filtrate
 - **Crosshair Sync**: Sincronizzazione cursore e range visibile tra grafico principale e sottografici
+- **Portfolio Management**: Vista dedicata con tre sezioni:
+  - Dashboard riepilogativa (cash, valore posizioni, P&L aperto/realizzato, net liquidity)
+  - Tabella posizioni aperte con PMC duale (valuta base + valuta strumento) e filtri per colonna
+  - Storico transazioni con tipo (BUY/SELL/SHORT/COVER/DEPOSIT/WITHDRAWAL), controvalore duale, tasso di cambio, e commissioni
+- **Transaction Modal**: Form per creare/modificare transazioni con supporto multi-valuta, tasso di cambio, selezione piano commissionale, e campi per short fee
+- **Cash Modal**: Deposito/prelievo liquidità dal portafoglio
+- **Commission Plans Modal**: Gestione piani commissionali con tipo (assoluto/percentuale), fisso, percentuale, minimo e massimo
+- **Alarm Configuration Modal**: Configura allarmi con trigger intraday o su chiusura candela
+- **Indicator Configuration Modal**: Configura parametri, colore, stile linea, spessore e opzioni di visualizzazione per ogni indicatore
 
 ### 6.4 Stato Frontend (Variabili Globali in `script.js`)
 
@@ -303,6 +354,12 @@ Le variabili principali gestiscono:
 - `drawings[]`: disegni persistenti
 - `screeningResultsCache{}`: cache locale dei risultati di screening
 - `tickerMappingsLookup`: Map Yahoo↔Investing per matching ticker
+- `activePortfolioId`: portafoglio attualmente selezionato
+- `portfolios[]`: lista portafogli
+- `activeDrawingTool`: strumento di disegno attivo (cursor, modify, eraser, horizontal_line, trend_line, fib_retracement, ecc.)
+- `drawingColor` / `drawingWidth`: stile attuale del disegno selezionato
+- `activeTab`: tab attivo nello screening (base, roc, fundamental, o custom)
+- `autoReopenFundamentals`: preferenza utente per riapertura automatica fondamentali
 
 ---
 
@@ -327,7 +384,23 @@ Le variabili principali gestiscono:
 4. I risultati vengono mostrati in tabella con filtri e ordinamento
 5. L'utente può filtrare e salvare una sotto-lista ("sub-universe")
 
-### 7.3 Disegni e Allarmi
+### 7.3 Portafoglio
+
+1. L'utente crea un portafoglio con nome e valuta base (es. EUR) nella vista Portafoglio
+2. Può configurare piani commissionali (commissioni fisse o percentuali, con minimo/massimo)
+3. Apre posizioni tramite transazioni BUY/SELL/SHORT/COVER, specificando:
+   - Ticker, quantità, prezzo, data
+   - Valuta dello strumento e tasso di cambio (strumento → base)
+   - Eventuale piano commissionale
+4. Le transazioni di tipo DEPOSIT/WITHDRAWAL gestiscono la liquidità
+5. Il backend calcola:
+   - **PMC** (Prezzo Medio di Carico) sia in valuta base che in valuta strumento
+   - **P&L** realizzato e non realizzato
+   - **Controvalore** corrente delle posizioni
+6. Le transazioni vengono visualizzate come **markers** sul grafico storico del ticker (verde = BUY, rosso = SELL, giallo = DIVIDEND)
+7. La tabella posizioni supporta filtri per colonna
+
+### 7.4 Disegni e Allarmi
 
 1. L'utente seleziona uno strumento dalla toolbar di disegno
 2. Clicca sul grafico per posizionare i punti
