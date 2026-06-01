@@ -280,13 +280,19 @@
                         </div>
 
                         <div id="fundamentals-collapsible-content" class="collapsible-content" style="margin-top: 15px;">
-                            <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
-                                <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 0.9rem;">
-                                    <input type="checkbox" id="update-fundamentals-list-checkbox"> Lista
-                                </label>
-                                <button id="update-fundamentals-btn" class="secondary">Aggiorna</button>
+                            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 15px; margin-bottom: 15px;">
+                                <div style="display: flex; align-items: center; gap: 15px;">
+                                    <label style="display: flex; align-items: center; gap: 5px; cursor: pointer; font-size: 0.9rem;">
+                                        <input type="checkbox" id="update-fundamentals-list-checkbox"> Lista
+                                    </label>
+                                    <button id="update-fundamentals-btn" class="secondary">Aggiorna</button>
+                                </div>
+                                <div class="fundamentals-search-container">
+                                    <span style="font-size: 0.85rem; color: #8b949e;">🔍</span>
+                                    <input type="text" id="fundamentals-search-input" class="fundamentals-search-input" placeholder="Cerca metrica... (es. PE, cash)">
+                                </div>
                             </div>
-                            <div id="fundamentals-container" class="fundamentals-grid" style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));">
+                            <div id="fundamentals-container" style="width: 100%;">
                                 <!-- Filled by JS -->
                             </div>
                             
