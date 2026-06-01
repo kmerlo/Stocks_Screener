@@ -926,40 +926,188 @@ class FinanceLogic:
     def get_historical_fundamental_data(self, db: Session, symbol: str, target_date_str: str):
         """Retrieves or downloads historical fundamental data valid for the clicked target date."""
         try:
-            # 1. Parse target date and find the last completed quarter date
-            # target_date_str is in format YYYY-MM-DD
+            # 1. Parse target date
             target_dt = datetime.strptime(target_date_str, "%Y-%m-%d").date()
+            target_datetime = datetime(target_dt.year, target_dt.month, target_dt.day, 23, 59, 59)
             
-            # Determine last completed quarter
-            if target_dt.month in [1, 2, 3]:
-                quarter_year = target_dt.year - 1
-                quarter_month = 12
-                quarter_day = 31
-            elif target_dt.month in [4, 5, 6]:
-                quarter_year = target_dt.year
-                quarter_month = 3
-                quarter_day = 31
-            elif target_dt.month in [7, 8, 9]:
-                quarter_year = target_dt.year
-                quarter_month = 6
-                quarter_day = 30
-            else:
-                quarter_year = target_dt.year
-                quarter_month = 9
-                quarter_day = 30
-                
-            quarter_date = datetime(quarter_year, quarter_month, quarter_day)
-
-            # 2. Check if cached in DB
+            # 2. Check if cached in DB (get the closest quarter date that is <= target_date)
             db_fund = db.query(HistoricalFundamentalData).filter(
                 HistoricalFundamentalData.symbol == symbol,
-                HistoricalFundamentalData.quarter_date == quarter_date
-            ).first()
+                HistoricalFundamentalData.quarter_date <= target_datetime
+            ).order_by(HistoricalFundamentalData.quarter_date.desc()).first()
+
+            # If cached quarter is too old (older than 110 days from target_dt) or doesn't exist, fetch from yfinance
+            needs_download = False
+            if not db_fund:
+                needs_download = True
+            else:
+                days_diff = (target_dt - db_fund.quarter_date.date()).days
+                if days_diff > 110:
+                    needs_download = True
             
+            if needs_download:
+                print(f"DEBUG: Fetching historical fundamentals from yfinance for {symbol}...")
+                ticker = yf.Ticker(symbol)
+                inc = ticker.quarterly_income_stmt
+                bal = ticker.quarterly_balance_sheet
+                
+                if not inc.empty and not bal.empty:
+                    cols = list(inc.columns)
+                    # For safe extraction helper
+                    def safe_get(df, row, col):
+                        if df is not None and row in df.index and col in df.columns:
+                            val = df.loc[row, col]
+                            if pd.notna(val):
+                                if isinstance(val, pd.Series):
+                                    val = val.iloc[0]
+                                return float(val)
+                        return None
+
+                    def get_ttm_value(df, row_name, target_c):
+                        if df is None or row_name not in df.index:
+                            return None
+                        df_cols = list(df.columns)
+                        try:
+                            idx = df_cols.index(target_c)
+                        except ValueError:
+                            idx = None
+                            for i, c in enumerate(df_cols):
+                                if abs((pd.to_datetime(c).date() - pd.to_datetime(target_c).date()).days) <= 7:
+                                    idx = i
+                                    break
+                        if idx is None:
+                            return None
+                        if idx + 4 > len(df_cols):
+                            vals = [safe_get(df, row_name, df_cols[i]) for i in range(idx, len(df_cols))]
+                            vals = [v for v in vals if v is not None]
+                            if not vals: return None
+                            return sum(vals) * (4.0 / len(vals))
+                        
+                        vals = [safe_get(df, row_name, df_cols[i]) for i in range(idx, idx + 4)]
+                        if any(v is None for v in vals):
+                            valid_vals = [v for v in vals if v is not None]
+                            if not valid_vals: return None
+                            return sum(valid_vals) * (4.0 / len(valid_vals))
+                        return sum(vals)
+
+                    # Pre-query existing metadata to avoid querying in loop
+                    meta_fund = db.query(FundamentalData).filter(FundamentalData.symbol == symbol).first()
+                    info = ticker.info if not meta_fund else {}
+                    sector = meta_fund.sector if meta_fund else info.get("sector")
+                    industry = meta_fund.industry if meta_fund else info.get("industry")
+                    summary = meta_fund.long_business_summary if meta_fund else info.get("longBusinessSummary")
+                    div_yield = meta_fund.dividend_yield if meta_fund else (info.get("dividendYield") / 100.0 if info.get("dividendYield") else None)
+                    beta = meta_fund.beta if meta_fund else info.get("beta")
+
+                    # Loop through all available quarter columns and save them
+                    for col in cols:
+                        col_dt = pd.to_datetime(col).date()
+                        col_datetime = datetime(col_dt.year, col_dt.month, col_dt.day)
+                        
+                        # Extract basic quarterly items for this column
+                        shares = safe_get(bal, 'Ordinary Shares Number', col) or safe_get(bal, 'Share Issued', col)
+                        cash = safe_get(bal, 'Cash Cash Equivalents And Short Term Investments', col) or safe_get(bal, 'Cash And Cash Equivalents', col)
+                        debt = safe_get(bal, 'Total Debt', col)
+                        assets = safe_get(bal, 'Current Assets', col)
+                        liabilities = safe_get(bal, 'Current Liabilities', col)
+                        book_val = safe_get(bal, 'Common Stock Equity', col) or safe_get(bal, 'Stockholders Equity', col) or safe_get(bal, 'Tangible Book Value', col)
+
+                        ttm_revenue = get_ttm_value(inc, 'Total Revenue', col)
+                        ttm_net_income = get_ttm_value(inc, 'Net Income', col)
+                        ttm_gross_profit = get_ttm_value(inc, 'Gross Profit', col)
+                        ttm_ebitda = get_ttm_value(inc, 'EBITDA', col)
+                        ttm_op_inc = get_ttm_value(inc, 'Operating Income', col)
+                        ttm_eps = get_ttm_value(inc, 'Diluted EPS', col) or get_ttm_value(inc, 'Basic EPS', col)
+                        
+                        gross_margins = ttm_gross_profit / ttm_revenue if ttm_revenue and ttm_gross_profit else None
+                        ebitda_margins = ttm_ebitda / ttm_revenue if ttm_revenue and ttm_ebitda else None
+                        operating_margins = ttm_op_inc / ttm_revenue if ttm_revenue and ttm_op_inc else None
+                        profit_margins = ttm_net_income / ttm_revenue if ttm_revenue and ttm_net_income else None
+
+                        rev_growth = None
+                        try:
+                            idx = cols.index(col)
+                            if idx + 4 < len(cols):
+                                prev_quarter_col = cols[idx + 4]
+                                prev_rev = safe_get(inc, 'Total Revenue', prev_quarter_col)
+                                curr_rev = safe_get(inc, 'Total Revenue', col)
+                                if prev_rev and curr_rev:
+                                    rev_growth = (curr_rev - prev_rev) / prev_rev
+                        except Exception:
+                            pass
+
+                        # We check if record already exists for this specific actual quarter date
+                        existing_q = db.query(HistoricalFundamentalData).filter(
+                            HistoricalFundamentalData.symbol == symbol,
+                            HistoricalFundamentalData.quarter_date == col_datetime
+                        ).first()
+
+                        if existing_q:
+                            # Update existing record
+                            existing_q.total_revenue = ttm_revenue
+                            existing_q.revenue_growth = rev_growth
+                            existing_q.gross_margins = gross_margins
+                            existing_q.ebitda_margins = ebitda_margins
+                            existing_q.operating_margins = operating_margins
+                            existing_q.profit_margins = profit_margins
+                            existing_q.total_cash = cash
+                            existing_q.total_debt = debt
+                            existing_q.current_ratio = assets / liabilities if assets and liabilities else None
+                            existing_q.shares = shares
+                            existing_q.ttm_eps = ttm_eps
+                            existing_q.book_value = book_val
+                            existing_q.sector = sector
+                            existing_q.industry = industry
+                            existing_q.long_business_summary = summary
+                            existing_q.dividend_yield = div_yield
+                            existing_q.beta = beta
+                            existing_q.raw_info = json.dumps({
+                                "matched_column": str(col),
+                                "ttm_eps": ttm_eps,
+                                "shares": shares,
+                                "book_value": book_val
+                            })
+                        else:
+                            db_q = HistoricalFundamentalData(
+                                symbol=symbol,
+                                quarter_date=col_datetime,
+                                total_revenue=ttm_revenue,
+                                revenue_growth=rev_growth,
+                                gross_margins=gross_margins,
+                                ebitda_margins=ebitda_margins,
+                                operating_margins=operating_margins,
+                                profit_margins=profit_margins,
+                                total_cash=cash,
+                                total_debt=debt,
+                                current_ratio=assets / liabilities if assets and liabilities else None,
+                                shares=shares,
+                                ttm_eps=ttm_eps,
+                                book_value=book_val,
+                                sector=sector,
+                                industry=industry,
+                                long_business_summary=summary,
+                                dividend_yield=div_yield,
+                                beta=beta,
+                                raw_info=json.dumps({
+                                    "matched_column": str(col),
+                                    "ttm_eps": ttm_eps,
+                                    "shares": shares,
+                                    "book_value": book_val
+                                })
+                            )
+                            db.add(db_q)
+                    
+                    db.commit()
+
+                    # Re-query the database to find the best match now that statements are updated
+                    db_fund = db.query(HistoricalFundamentalData).filter(
+                        HistoricalFundamentalData.symbol == symbol,
+                        HistoricalFundamentalData.quarter_date <= target_datetime
+                    ).order_by(HistoricalFundamentalData.quarter_date.desc()).first()
+
+            # If we successfully retrieved/updated the closest quarter:
             if db_fund:
-                print(f"DEBUG: Found cached historical fundamentals for {symbol} on {quarter_date.strftime('%Y-%m-%d')}. Recalculating price-based metrics...")
-                # Fetch price on target_date for dynamic valuation ratios
-                target_datetime = datetime(target_dt.year, target_dt.month, target_dt.day, 23, 59, 59)
+                # Fetch price on target_date for dynamic ratios
                 price_rec = db.query(DBPriceData).filter(
                     DBPriceData.symbol == symbol,
                     DBPriceData.date <= target_datetime
@@ -978,182 +1126,14 @@ class FinanceLogic:
                     if db_fund.book_value and db_fund.book_value != 0 and db_fund.market_cap:
                         db_fund.pb_ratio = db_fund.market_cap / db_fund.book_value
                 return db_fund
-
-            # 3. If not cached, we download and calculate it
-            print(f"DEBUG: Fetching historical fundamentals for {symbol} for quarter ending {quarter_date.strftime('%Y-%m-%d')}...")
-            ticker = yf.Ticker(symbol)
             
-            # Fetch price on target_date for valuation ratios
-            target_datetime = datetime(target_dt.year, target_dt.month, target_dt.day, 23, 59, 59)
-            price_rec = db.query(DBPriceData).filter(
-                DBPriceData.symbol == symbol,
-                DBPriceData.date <= target_datetime
-            ).order_by(DBPriceData.date.desc()).first()
-            
-            close_price = float(price_rec.close) if price_rec else None
-            
-            # Retrieve statements
-            inc = ticker.quarterly_income_stmt
-            bal = ticker.quarterly_balance_sheet
-            
-            if inc.empty or bal.empty:
-                print(f"DEBUG: Quarterly statements empty or not available for {symbol}")
-                return None
-                
-            # Helper to extract value safely from DataFrames
-            def safe_get(df, row, col):
-                if df is not None and row in df.index and col in df.columns:
-                    val = df.loc[row, col]
-                    if pd.notna(val):
-                        if isinstance(val, pd.Series):
-                            val = val.iloc[0]
-                        return float(val)
-                return None
-                
-            # Find closest matching column in yfinance statements
-            matched_col = None
-            cols = list(inc.columns)
-            for col in cols:
-                col_dt = pd.to_datetime(col).date()
-                if abs((col_dt - quarter_date.date()).days) <= 7:
-                    matched_col = col
-                    break
-                    
-            if not matched_col:
-                print(f"DEBUG: No matching quarter column found within 7 days of {quarter_date.strftime('%Y-%m-%d')} for {symbol}")
-                # Fallback to the closest column before target_dt
-                for col in cols:
-                    col_dt = pd.to_datetime(col).date()
-                    if col_dt <= target_dt:
-                        matched_col = col
-                        break
-                        
-            if not matched_col:
-                print(f"DEBUG: Could not find any suitable quarter column for {symbol} before {target_date_str}")
-                return None
-
-            # Helper for TTM values
-            def get_ttm_value(df, row_name, target_c):
-                if df is None or row_name not in df.index:
-                    return None
-                df_cols = list(df.columns)
-                try:
-                    idx = df_cols.index(target_c)
-                except ValueError:
-                    idx = None
-                    for i, c in enumerate(df_cols):
-                        if abs((pd.to_datetime(c).date() - pd.to_datetime(target_c).date()).days) <= 7:
-                            idx = i
-                            break
-                if idx is None:
-                    return None
-                
-                # Retrieve up to 4 consecutive quarters
-                if idx + 4 > len(df_cols):
-                    vals = [safe_get(df, row_name, df_cols[i]) for i in range(idx, len(df_cols))]
-                    vals = [v for v in vals if v is not None]
-                    if not vals:
-                        return None
-                    return sum(vals) * (4.0 / len(vals))
-                
-                vals = [safe_get(df, row_name, df_cols[i]) for i in range(idx, idx + 4)]
-                if any(v is None for v in vals):
-                    valid_vals = [v for v in vals if v is not None]
-                    if not valid_vals:
-                        return None
-                    return sum(valid_vals) * (4.0 / len(valid_vals))
-                return sum(vals)
-
-            # Extract basic quarterly items
-            shares = safe_get(bal, 'Ordinary Shares Number', matched_col) or safe_get(bal, 'Share Issued', matched_col)
-            cash = safe_get(bal, 'Cash Cash Equivalents And Short Term Investments', matched_col) or safe_get(bal, 'Cash And Cash Equivalents', matched_col)
-            debt = safe_get(bal, 'Total Debt', matched_col)
-            assets = safe_get(bal, 'Current Assets', matched_col)
-            liabilities = safe_get(bal, 'Current Liabilities', matched_col)
-            book_val = safe_get(bal, 'Common Stock Equity', matched_col) or safe_get(bal, 'Stockholders Equity', matched_col) or safe_get(bal, 'Tangible Book Value', matched_col)
-
-            # Compute TTM Income statement values
-            ttm_revenue = get_ttm_value(inc, 'Total Revenue', matched_col)
-            ttm_net_income = get_ttm_value(inc, 'Net Income', matched_col)
-            ttm_gross_profit = get_ttm_value(inc, 'Gross Profit', matched_col)
-            ttm_ebitda = get_ttm_value(inc, 'EBITDA', matched_col)
-            ttm_op_inc = get_ttm_value(inc, 'Operating Income', matched_col)
-            ttm_eps = get_ttm_value(inc, 'Diluted EPS', matched_col) or get_ttm_value(inc, 'Basic EPS', matched_col)
-            
-            # Compute Margins
-            gross_margins = ttm_gross_profit / ttm_revenue if ttm_revenue and ttm_gross_profit else None
-            ebitda_margins = ttm_ebitda / ttm_revenue if ttm_revenue and ttm_ebitda else None
-            operating_margins = ttm_op_inc / ttm_revenue if ttm_revenue and ttm_op_inc else None
-            profit_margins = ttm_net_income / ttm_revenue if ttm_revenue and ttm_net_income else None
-
-            # Revenue Growth YoY
-            rev_growth = None
-            try:
-                idx = cols.index(matched_col)
-                if idx + 4 < len(cols):
-                    prev_quarter_col = cols[idx + 4]
-                    prev_rev = safe_get(inc, 'Total Revenue', prev_quarter_col)
-                    curr_rev = safe_get(inc, 'Total Revenue', matched_col)
-                    if prev_rev and curr_rev:
-                        rev_growth = (curr_rev - prev_rev) / prev_rev
-            except Exception:
-                pass
-
-            # Ratios
-            market_cap = close_price * shares if close_price and shares else None
-            pe_ratio = close_price / ttm_eps if close_price and ttm_eps and ttm_eps != 0 else None
-            ps_ratio = market_cap / ttm_revenue if market_cap and ttm_revenue and ttm_revenue != 0 else None
-            pb_ratio = market_cap / book_val if market_cap and book_val and book_val != 0 else None
-
-            # Metadata from current ticker info or current FundamentalData
-            meta_fund = db.query(FundamentalData).filter(FundamentalData.symbol == symbol).first()
-            info = ticker.info if not meta_fund else {}
-            
-            sector = meta_fund.sector if meta_fund else info.get("sector")
-            industry = meta_fund.industry if meta_fund else info.get("industry")
-            summary = meta_fund.long_business_summary if meta_fund else info.get("longBusinessSummary")
-            div_yield = meta_fund.dividend_yield if meta_fund else (info.get("dividendYield") / 100.0 if info.get("dividendYield") else None)
-            beta = meta_fund.beta if meta_fund else info.get("beta")
-
-            # Create record
-            db_fund = HistoricalFundamentalData(
-                symbol=symbol,
-                quarter_date=quarter_date,
-                market_cap=market_cap,
-                pe_ratio=pe_ratio,
-                forward_pe=None,
-                ps_ratio=ps_ratio,
-                pb_ratio=pb_ratio,
-                dividend_yield=div_yield,
-                beta=beta,
-                total_revenue=ttm_revenue,
-                revenue_growth=rev_growth,
-                gross_margins=gross_margins,
-                ebitda_margins=ebitda_margins,
-                operating_margins=operating_margins,
-                profit_margins=profit_margins,
-                total_cash=cash,
-                total_debt=debt,
-                current_ratio=assets / liabilities if assets and liabilities else None,
-                shares=shares,
-                ttm_eps=ttm_eps,
-                book_value=book_val,
-                sector=sector,
-                industry=industry,
-                long_business_summary=summary,
-                raw_info=json.dumps({
-                    "matched_column": str(matched_col),
-                    "close_price": close_price,
-                    "ttm_eps": ttm_eps,
-                    "shares": shares,
-                    "book_value": book_val
-                })
-            )
-            
-            db.add(db_fund)
-            db.commit()
-            db.refresh(db_fund)
-            return db_fund
+            return None
+        except Exception as e:
+            db.rollback()
+            print(f"Error retrieving historical fundamentals for {symbol} on {target_date_str}: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
         except Exception as e:
             db.rollback()
             print(f"Error retrieving historical fundamentals for {symbol} on {target_date_str}: {e}")

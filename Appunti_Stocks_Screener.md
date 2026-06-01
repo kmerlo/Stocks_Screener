@@ -223,6 +223,13 @@ Modulo Selenium che:
 | GET    | `/lists/{list_id}/fundamentals`             | Fondamentali per lista              |
 | POST   | `/lists/{list_id}/fundamentals/update`      | Aggiorna fondamentali per lista     |
 
+**Gestione Trimestri Variabili**
+
+- La logica ora recupera le date di chiusura reale dei trimestri (campo `quarter_date`) direttamente da Yahoo Finance tramite `yfinance`.
+- Il DB `fundamental_data` è stato aggiornato per includere la colonna `quarter_date`.
+- Le API ora restituiscono i dati fondamentali associati alla data di chiusura corretta, evitando le precedenti date fittizie (es. 2025-12-31).
+- La funzione `get_historical_fundamental_data` in `finance_logic.py` seleziona il record più vicino alla data richiesta, garantendo coerenza per società con calendari fiscali non standard (es. CRM).
+
 ### Ticker Mappings (Yahoo ↔ Investing)
 
 | Metodo | Endpoint                         | Descrizione                            |
