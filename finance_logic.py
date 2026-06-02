@@ -1316,7 +1316,8 @@ class FinanceLogic:
                     "currency": t.instrument_currency,
                     "pmc_instrument": 0.0,
                     "total_invested_instrument": 0.0,
-                    "realized_pl_instrument": 0.0
+                    "realized_pl_instrument": 0.0,
+                    "open_date": t.date.strftime("%Y-%m-%d") if t.date else None
                 }
             
             p = positions[sym]
@@ -1375,37 +1376,45 @@ class FinanceLogic:
         fx_cache = {}
 
         for sym, p in positions.items():
-            if abs(p["quantity"]) > 0.0001:
-                latest_price_obj = db.query(PriceData).filter(PriceData.symbol == sym).order_by(PriceData.date.desc()).first()
-                
-                # Fetch current FX rate for the instrument currency to base currency
-                fx_pair = (p["currency"], portfolio.base_currency)
-                if fx_pair not in fx_cache:
-                    fx_cache[fx_pair] = self.get_fx_rate(fx_pair[0], fx_pair[1])
-                latest_fx = fx_cache[fx_pair]
+            has_signal = abs(p["quantity"]) < 0.0001 and p["total_invested"] == 0.0
 
-                latest_price = latest_price_obj.close if latest_price_obj else p["pmc"] / latest_fx if latest_fx else 0.0
-                
-                current_val_base = (latest_price * p["quantity"]) * latest_fx
-                
-                if p["quantity"] > 0:
-                    unreal = (latest_price * latest_fx - p["pmc"]) * p["quantity"]
-                    unreal_instrument = (latest_price - p["pmc_instrument"]) * p["quantity"]
+            if abs(p["quantity"]) > 0.0001 or has_signal:
+                if abs(p["quantity"]) > 0.0001:
+                    latest_price_obj = db.query(PriceData).filter(PriceData.symbol == sym).order_by(PriceData.date.desc()).first()
+                    
+                    fx_pair = (p["currency"], portfolio.base_currency)
+                    if fx_pair not in fx_cache:
+                        fx_cache[fx_pair] = self.get_fx_rate(fx_pair[0], fx_pair[1])
+                    latest_fx = fx_cache[fx_pair]
+
+                    latest_price = latest_price_obj.close if latest_price_obj else p["pmc"] / latest_fx if latest_fx else 0.0
+                    
+                    current_val_base = (latest_price * p["quantity"]) * latest_fx
+                    
+                    if p["quantity"] > 0:
+                        unreal = (latest_price * latest_fx - p["pmc"]) * p["quantity"]
+                        unreal_instrument = (latest_price - p["pmc_instrument"]) * p["quantity"]
+                    else:
+                        unreal = (p["pmc"] - latest_price * latest_fx) * abs(p["quantity"])
+                        unreal_instrument = (p["pmc_instrument"] - latest_price) * abs(p["quantity"])
+
+                    current_val_instrument = latest_price * p["quantity"]
+                    p["current_price"] = latest_price
+                    p["current_value"] = current_val_base
+                    p["current_value_instrument"] = current_val_instrument
+                    p["unrealized_pl"] = unreal
+                    p["unrealized_pl_instrument"] = unreal_instrument
+                    
+                    total_invested += p["total_invested"]
+                    total_current_value += current_val_base
+                    unrealized_pl += unreal
                 else:
-                    unreal = (p["pmc"] - latest_price * latest_fx) * abs(p["quantity"])
-                    unreal_instrument = (p["pmc_instrument"] - latest_price) * abs(p["quantity"])
+                    p["current_price"] = 0.0
+                    p["current_value"] = 0.0
+                    p["current_value_instrument"] = 0.0
+                    p["unrealized_pl"] = 0.0
+                    p["unrealized_pl_instrument"] = 0.0
 
-                current_val_instrument = latest_price * p["quantity"]
-                p["current_price"] = latest_price
-                p["current_value"] = current_val_base
-                p["current_value_instrument"] = current_val_instrument
-                p["unrealized_pl"] = unreal
-                p["unrealized_pl_instrument"] = unreal_instrument
-                
-                total_invested += p["total_invested"]
-                total_current_value += current_val_base
-                unrealized_pl += unreal
-                
                 active_positions.append(p)
 
         return {

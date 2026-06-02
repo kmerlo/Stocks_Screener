@@ -181,6 +181,15 @@
                     </div>
                     <div class="drawing-toolbar-sep"></div>
 
+                    <!-- Portfolio Selector -->
+                    <div class="toolbar-section" style="display:flex; align-items:center; gap:6px;">
+                        <label style="font-size:12px; color: var(--text-secondary);">Portafoglio:</label>
+                        <select id="chart-portfolio-select" style="padding: 3px 6px; font-size: 12px; height: 26px; max-width: 140px;">
+                            <option value="">Tutti i ticker...</option>
+                        </select>
+                    </div>
+                    <div class="drawing-toolbar-sep"></div>
+
                     <!-- Navigation -->
                     <button class="drawing-tool-btn" data-tool="cursor" title="Mano – sposta il grafico">✋</button>
                     <button class="drawing-tool-btn" data-tool="modify" title="Modifica – sposta gli oggetti sul grafico">✥</button>
@@ -857,19 +866,20 @@
         <!-- Portfolio View -->
         <div id="portfolio-view" class="view-container hidden">
             <div class="card" style="margin-bottom: 20px;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
-                    <h3>Gestione Portafoglio</h3>
-                    <div style="display: flex; gap: 10px;">
-                        <select id="portfolio-select" style="min-width: 150px;">
-                            <option value="">Seleziona Portafoglio...</option>
-                        </select>
-                        <button id="create-portfolio-btn" class="header-btn">Nuovo</button>
-                        <button id="delete-portfolio-btn" class="header-btn" style="background-color: var(--danger-color);">Cancella</button>
-                        <button id="manage-commission-plans-btn" class="header-btn secondary">Piani Commissionali</button>
+                <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                        <h3 style="margin: 0;">Gestione Portafoglio</h3>
+                        <div style="display: flex; gap: 10px;">
+                            <select id="portfolio-select" style="min-width: 150px;">
+                                <option value="">Seleziona Portafoglio...</option>
+                            </select>
+                            <button id="create-portfolio-btn" class="header-btn">Nuovo</button>
+                            <button id="delete-portfolio-btn" class="header-btn" style="background-color: var(--danger-color);">Cancella</button>
+                            <button id="manage-commission-plans-btn" class="header-btn secondary">Piani Commissionali</button>
+                        </div>
                     </div>
                 </div>
-                
-                <!-- Dashboard Summary -->
+                <div class="collapsible-body">
                 <div id="portfolio-summary-dashboard" style="display: none; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
                     <div class="stat-box" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; text-align: center;">
                         <div style="font-size: 0.9rem; color: var(--text-secondary);">Liquidità (Cash)</div>
@@ -899,36 +909,44 @@
                     <button id="close-position-top-btn" class="header-btn" style="background: var(--danger-color);">Chiudi Posizione</button>
                     <button id="add-cash-btn" class="header-btn secondary">Deposita / Preleva</button>
                 </div>
+                </div>
             </div>
 
             <!-- Open Positions -->
             <div id="portfolio-positions-container" class="card" style="display: none; margin-bottom: 20px;">
-                <h3>Posizioni Aperte</h3>
-                <div style="overflow-x: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+                <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                    <h3 style="margin: 0;">Posizioni Aperte</h3>
+                </div>
+                <div class="collapsible-body">
+                    <div class="table-scroll-wrapper">
                     <table id="portfolio-positions-table">
                         <thead>
-                            <tr>
-                                <th>Ticker</th>
-                                <th>Quantità</th>
-                                <th>PMC (Base)</th>
-                                <th>PMC (Valuta)</th>
-                                <th>Prezzo Attuale</th>
-                                <th>Valore C. (Base)</th>
-                                <th>Valore C. (Valuta)</th>
-                                <th>P&L (Base)</th>
-                                <th>P&L (Valuta)</th>
+                            <tr id="pos-header-row">
+                                <th onclick="togglePosSort('ticker')" class="sortable-th">Ticker <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('date')" class="sortable-th">Data Apertura <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('days')" class="sortable-th">Giorni <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('quantity')" class="sortable-th">Quantità <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('pmc')" class="sortable-th">PMC (Base) <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('pmc_instrument')" class="sortable-th">PMC (Valuta) <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('current_price')" class="sortable-th">Prezzo Attuale <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('current_value')" class="sortable-th">Valore C. (Base) <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('current_value_instrument')" class="sortable-th">Valore C. (Valuta) <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('unrealized_pl')" class="sortable-th">P&L (Base) <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('unrealized_pl_instrument')" class="sortable-th">P&L (Valuta) <span class="sort-arrow"></span></th>
                                 <th>Azioni</th>
                             </tr>
                             <tr class="filter-row">
                                 <th><input type="text" placeholder="Filtra Ticker" id="pos-filter-ticker" class="portfolio-pos-filter" style="width:100%"></th>
-                                <th><input type="text" placeholder="Filtra Qtà" id="pos-filter-qty" class="portfolio-pos-filter" style="width:100%"></th>
-                                <th><input type="text" placeholder="Filtra PMC B." id="pos-filter-pmc-base" class="portfolio-pos-filter" style="width:100%"></th>
-                                <th><input type="text" placeholder="Filtra PMC V." id="pos-filter-pmc-val" class="portfolio-pos-filter" style="width:100%"></th>
-                                <th><input type="text" placeholder="Filtra Prezzo" id="pos-filter-price" class="portfolio-pos-filter" style="width:100%"></th>
-                                <th><input type="text" placeholder="Filtra Val. B." id="pos-filter-value-base" class="portfolio-pos-filter" style="width:100%"></th>
-                                <th><input type="text" placeholder="Filtra Val. V." id="pos-filter-value-val" class="portfolio-pos-filter" style="width:100%"></th>
-                                <th><input type="text" placeholder="Filtra P&L B." id="pos-filter-pnl-base" class="portfolio-pos-filter" style="width:100%"></th>
-                                <th><input type="text" placeholder="Filtra P&L V." id="pos-filter-pnl-val" class="portfolio-pos-filter" style="width:100%"></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-date-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-date-max" class="portfolio-pos-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-days-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-days-max" class="portfolio-pos-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-qty-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-qty-max" class="portfolio-pos-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pmc-base-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pmc-base-max" class="portfolio-pos-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pmc-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pmc-val-max" class="portfolio-pos-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-price-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-price-max" class="portfolio-pos-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-value-base-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-value-base-max" class="portfolio-pos-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-value-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-value-val-max" class="portfolio-pos-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pnl-base-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pnl-base-max" class="portfolio-pos-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pnl-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pnl-val-max" class="portfolio-pos-filter"></div></th>
                                 <th></th>
                             </tr>
                         </thead>
@@ -936,39 +954,43 @@
                             <!-- Positions will be rendered here -->
                         </tbody>
                     </table>
+                    </div>
                 </div>
             </div>
 
             <!-- Transactions History -->
             <div id="portfolio-history-container" class="card" style="display: none;">
-                <h3>Storico Transazioni</h3>
-                <div style="overflow-x: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+                <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                    <h3 style="margin: 0;">Storico Transazioni</h3>
+                </div>
+                <div class="collapsible-body">
+                    <div class="table-scroll-wrapper">
                     <table id="portfolio-history-table">
                         <thead>
-                            <tr>
-                                <th>Data</th>
-                                <th>Ticker</th>
-                                <th>Tipo</th>
-                                <th>Quantità</th>
-                                <th>Prezzo</th>
-                                <th>Controv. (Base)</th>
-                                <th>Controv. (Valuta)</th>
-                                <th>Valuta</th>
-                                <th>Cambio</th>
-                                <th>Commissioni</th>
+                            <tr id="hist-header-row">
+                                <th onclick="toggleHistSort('date')" class="sortable-th">Data <span class="sort-arrow"></span></th>
+                                <th onclick="toggleHistSort('ticker')" class="sortable-th">Ticker <span class="sort-arrow"></span></th>
+                                <th onclick="toggleHistSort('type')" class="sortable-th">Tipo <span class="sort-arrow"></span></th>
+                                <th onclick="toggleHistSort('quantity')" class="sortable-th">Quantità <span class="sort-arrow"></span></th>
+                                <th onclick="toggleHistSort('price')" class="sortable-th">Prezzo <span class="sort-arrow"></span></th>
+                                <th onclick="toggleHistSort('cvBase')" class="sortable-th">Controv. (Base) <span class="sort-arrow"></span></th>
+                                <th onclick="toggleHistSort('cvVal')" class="sortable-th">Controv. (Valuta) <span class="sort-arrow"></span></th>
+                                <th onclick="toggleHistSort('currency')" class="sortable-th">Valuta <span class="sort-arrow"></span></th>
+                                <th onclick="toggleHistSort('fx')" class="sortable-th">Cambio <span class="sort-arrow"></span></th>
+                                <th onclick="toggleHistSort('comm')" class="sortable-th">Commissioni <span class="sort-arrow"></span></th>
                                 <th>Azioni</th>
                             </tr>
                             <tr class="filter-row">
-                                <th><input type="text" placeholder="Filtra Data" id="hist-filter-date" class="portfolio-hist-filter" style="width:100%"></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-date-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-date-max" class="portfolio-hist-filter"></div></th>
                                 <th><input type="text" placeholder="Filtra Ticker" id="hist-filter-ticker" class="portfolio-hist-filter" style="width:100%"></th>
                                 <th><input type="text" placeholder="Filtra Tipo" id="hist-filter-type" class="portfolio-hist-filter" style="width:100%"></th>
-                                <th><input type="text" placeholder="Filtra Qtà" id="hist-filter-qty" class="portfolio-hist-filter" style="width:100%"></th>
-                                <th><input type="text" placeholder="Filtra Prezzo" id="hist-filter-price" class="portfolio-hist-filter" style="width:100%"></th>
-                                <th><input type="text" placeholder="Filtra Controv. B." id="hist-filter-cv-base" class="portfolio-hist-filter" style="width:100%"></th>
-                                <th><input type="text" placeholder="Filtra Controv. V." id="hist-filter-cv-val" class="portfolio-hist-filter" style="width:100%"></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-qty-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-qty-max" class="portfolio-hist-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-price-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-price-max" class="portfolio-hist-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-cv-base-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-cv-base-max" class="portfolio-hist-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-cv-val-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-cv-val-max" class="portfolio-hist-filter"></div></th>
                                 <th><input type="text" placeholder="Filtra Valuta" id="hist-filter-currency" class="portfolio-hist-filter" style="width:100%"></th>
-                                <th><input type="text" placeholder="Filtra Cambio" id="hist-filter-fx" class="portfolio-hist-filter" style="width:100%"></th>
-                                <th><input type="text" placeholder="Filtra Comm." id="hist-filter-comm" class="portfolio-hist-filter" style="width:100%"></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-fx-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-fx-max" class="portfolio-hist-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-comm-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-comm-max" class="portfolio-hist-filter"></div></th>
                                 <th></th>
                             </tr>
                         </thead>
@@ -1293,8 +1315,9 @@
                     <tbody id="commission-plans-body">
                         <!-- Plans will be listed here -->
                     </tbody>
-                </table>
-            </div>
+                    </table>
+                    </div>
+                </div>
             </div>
         </div>
 

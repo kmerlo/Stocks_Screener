@@ -7385,6 +7385,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     await loadLists(); // Prioritized
     await loadIndices();
     await loadPortfolios();
+    await loadChartPortfolios();
 
     // 2. Component initialization
     initApp();
@@ -7486,6 +7487,8 @@ let activePortfolioBaseCurrency = 'EUR';
 let commissionPlans = [];
 let portfoliosMap = new Map();
 let currentTransactions = [];
+let posSortState = { key: null, dir: 'asc' };
+let histSortState = { key: null, dir: 'asc' };
 let editingTransactionId = null;
 let transDatePickr = null;
 let cashDatePickr = null;
@@ -7519,6 +7522,94 @@ async function loadPortfolios() {
     } catch (err) {
         console.error("Error loading portfolios:", err);
     }
+}
+
+async function loadChartPortfolios() {
+    try {
+        const response = await fetch('/portfolios/');
+        const portfolios = await response.json();
+        const select = document.getElementById('chart-portfolio-select');
+        if (select) {
+            const currentVal = select.value;
+            select.innerHTML = '<option value="">Tutti i ticker...</option>';
+            portfolios.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.id;
+                opt.textContent = p.name;
+                select.appendChild(opt);
+            });
+            if (currentVal) select.value = currentVal;
+        }
+    } catch (err) {
+        console.error("Error loading chart portfolios:", err);
+    }
+}
+
+async function populateChartSlotsFromPortfolio(portfolioId) {
+    if (!portfolioId) {
+        if (activeListId) {
+            loadListDetails(activeListId, activeView === 'monitoring');
+        }
+        return;
+    }
+    try {
+        const response = await fetch(`/portfolios/${portfolioId}/summary`);
+        const data = await response.json();
+        const positions = data.positions || [];
+        const tickers = [...new Set(positions.map(p => p.ticker).filter(Boolean))];
+        tickers.sort();
+
+        document.querySelectorAll('.chart-slot-ticker').forEach((select, idx) => {
+            const currentVal = select.value;
+            const slotIdx = parseInt(select.dataset.slot);
+            select.innerHTML = '<option value="">Seleziona...</option>';
+            tickers.forEach(t => {
+                const opt = document.createElement('option');
+                opt.value = t;
+                opt.textContent = t;
+                select.appendChild(opt);
+            });
+            if (currentVal && tickers.includes(currentVal)) {
+                select.value = currentVal;
+            } else {
+                if (chartSlots[slotIdx] && chartSlots[slotIdx].ticker && !tickers.includes(chartSlots[slotIdx].ticker)) {
+                    chartSlots[slotIdx].ticker = '';
+                    chartSlots[slotIdx].tickerName = '';
+                    if (chartSlots[slotIdx].priceSeries) {
+                        try { chartSlots[slotIdx].priceSeries.setData([]); } catch (e) { }
+                    }
+                }
+            }
+        });
+
+        if (tickers.length > 0 && (!activeTicker || !tickers.includes(activeTicker))) {
+            activeTicker = tickers[0];
+            activeTickerName = null;
+            const slotSelect = document.querySelector(`.chart-slot-ticker[data-slot="${activeChartIndex}"]`);
+            if (slotSelect) slotSelect.value = activeTicker;
+            const nameSpan = document.querySelector(`.chart-slot-name[data-slot="${activeChartIndex}"]`);
+            if (nameSpan) nameSpan.textContent = '';
+            const runUpdate = () => {
+                if (!mainChart || chartSlots.length === 0) {
+                    setTimeout(runUpdate, 50);
+                    return;
+                }
+                updateChart(activeTicker).then(() => autoPopulateEmptySlots());
+            };
+            runUpdate();
+        } else if (activeTicker && tickers.includes(activeTicker)) {
+            updateChart(activeTicker);
+        }
+    } catch (err) {
+        console.error("Error loading portfolio tickers for chart:", err);
+    }
+}
+
+const chartPortfolioSelect = document.getElementById('chart-portfolio-select');
+if (chartPortfolioSelect) {
+    chartPortfolioSelect.addEventListener('change', (e) => {
+        populateChartSlotsFromPortfolio(e.target.value);
+    });
 }
 
 async function loadCommissionPlans() {
@@ -7629,6 +7720,16 @@ function renderPortfolioSummary(data) {
     renderPortfolioPositions();
 }
 
+function togglePosSort(key) {
+    if (posSortState.key === key) {
+        posSortState.dir = posSortState.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+        posSortState.key = key;
+        posSortState.dir = 'asc';
+    }
+    renderPortfolioPositions();
+}
+
 function renderPortfolioPositions() {
     const tbody = document.getElementById('portfolio-positions-body');
     if (!tbody) return;
@@ -7636,35 +7737,79 @@ function renderPortfolioPositions() {
     
     const curr = activePortfolioBaseCurrency;
     
+    const v = (id) => document.getElementById(id)?.value.toLowerCase() || '';
     const filters = {
-        ticker: document.getElementById('pos-filter-ticker')?.value.toLowerCase() || '',
-        qty: document.getElementById('pos-filter-qty')?.value.toLowerCase() || '',
-        pmcBase: document.getElementById('pos-filter-pmc-base')?.value.toLowerCase() || '',
-        pmcVal: document.getElementById('pos-filter-pmc-val')?.value.toLowerCase() || '',
-        price: document.getElementById('pos-filter-price')?.value.toLowerCase() || '',
-        valueBase: document.getElementById('pos-filter-value-base')?.value.toLowerCase() || '',
-        valueVal: document.getElementById('pos-filter-value-val')?.value.toLowerCase() || '',
-        pnlBase: document.getElementById('pos-filter-pnl-base')?.value.toLowerCase() || '',
-        pnlVal: document.getElementById('pos-filter-pnl-val')?.value.toLowerCase() || ''
+        ticker: v('pos-filter-ticker'),
+        dateMin: v('pos-filter-date-min'), dateMax: v('pos-filter-date-max'),
+        daysMin: v('pos-filter-days-min'), daysMax: v('pos-filter-days-max'),
+        qtyMin: v('pos-filter-qty-min'), qtyMax: v('pos-filter-qty-max'),
+        pmcBaseMin: v('pos-filter-pmc-base-min'), pmcBaseMax: v('pos-filter-pmc-base-max'),
+        pmcValMin: v('pos-filter-pmc-val-min'), pmcValMax: v('pos-filter-pmc-val-max'),
+        priceMin: v('pos-filter-price-min'), priceMax: v('pos-filter-price-max'),
+        valueBaseMin: v('pos-filter-value-base-min'), valueBaseMax: v('pos-filter-value-base-max'),
+        valueValMin: v('pos-filter-value-val-min'), valueValMax: v('pos-filter-value-val-max'),
+        pnlBaseMin: v('pos-filter-pnl-base-min'), pnlBaseMax: v('pos-filter-pnl-base-max'),
+        pnlValMin: v('pos-filter-pnl-val-min'), pnlValMax: v('pos-filter-pnl-val-max')
     };
 
-    const filtered = currentPortfolioPositions.filter(pos => {
+    const now = new Date();
+
+    function inMinMax(val, minS, maxS) {
+        if (minS !== '' && (val == null || val < parseFloat(minS))) return false;
+        if (maxS !== '' && (val == null || val > parseFloat(maxS))) return false;
+        return true;
+    }
+
+    function inDateMinMax(dateStr, minS, maxS) {
+        if (!dateStr && (minS || maxS)) return false;
+        if (minS && dateStr < minS) return false;
+        if (maxS && dateStr > maxS) return false;
+        return true;
+    }
+
+    let filtered = currentPortfolioPositions.filter(pos => {
         if (filters.ticker && (!pos.ticker || !pos.ticker.toLowerCase().includes(filters.ticker))) return false;
-        if (filters.qty && (pos.quantity == null || !pos.quantity.toFixed(0).includes(filters.qty))) return false;
-        if (filters.pmcBase && (pos.pmc == null || !pos.pmc.toFixed(2).includes(filters.pmcBase))) return false;
-        if (filters.pmcVal && !(pos.pmc_instrument ?? 0).toFixed(2).includes(filters.pmcVal)) return false;
-        if (filters.price && (pos.current_price == null || !pos.current_price.toFixed(2).includes(filters.price))) return false;
-        if (filters.valueBase && (pos.current_value == null || !pos.current_value.toFixed(2).includes(filters.valueBase))) return false;
-        if (filters.valueVal && (pos.current_value_instrument == null || !pos.current_value_instrument.toFixed(2).includes(filters.valueVal))) return false;
-        if (filters.pnlBase && (pos.unrealized_pl == null || !pos.unrealized_pl.toFixed(2).includes(filters.pnlBase))) return false;
-        if (filters.pnlVal && !(pos.unrealized_pl_instrument ?? 0).toFixed(2).includes(filters.pnlVal)) return false;
+        const openDate = pos.open_date || '';
+        const days = openDate ? Math.floor((now - new Date(openDate)) / 86400000) : 0;
+        if (!inDateMinMax(openDate, filters.dateMin, filters.dateMax)) return false;
+        if (!inMinMax(days, filters.daysMin, filters.daysMax)) return false;
+        if (!inMinMax(pos.quantity, filters.qtyMin, filters.qtyMax)) return false;
+        if (!inMinMax(pos.pmc, filters.pmcBaseMin, filters.pmcBaseMax)) return false;
+        if (!inMinMax(pos.pmc_instrument ?? 0, filters.pmcValMin, filters.pmcValMax)) return false;
+        if (!inMinMax(pos.current_price, filters.priceMin, filters.priceMax)) return false;
+        if (!inMinMax(pos.current_value, filters.valueBaseMin, filters.valueBaseMax)) return false;
+        if (!inMinMax(pos.current_value_instrument ?? 0, filters.valueValMin, filters.valueValMax)) return false;
+        if (!inMinMax(pos.unrealized_pl, filters.pnlBaseMin, filters.pnlBaseMax)) return false;
+        if (!inMinMax(pos.unrealized_pl_instrument ?? 0, filters.pnlValMin, filters.pnlValMax)) return false;
         return true;
     });
+
+    if (posSortState.key) {
+        const k = posSortState.key;
+        const d = posSortState.dir === 'asc' ? 1 : -1;
+        filtered.sort((a, b) => {
+            let va, vb;
+            if (k === 'ticker') { va = a.ticker || ''; vb = b.ticker || ''; return va.localeCompare(vb) * d; }
+            if (k === 'date') { va = a.open_date || ''; vb = b.open_date || ''; return va.localeCompare(vb) * d; }
+            if (k === 'days') {
+                const da = a.open_date ? Math.floor((now - new Date(a.open_date)) / 86400000) : 0;
+                const db = b.open_date ? Math.floor((now - new Date(b.open_date)) / 86400000) : 0;
+                return (da - db) * d;
+            }
+            va = a[k] ?? 0; vb = b[k] ?? 0;
+            return (va - vb) * d;
+        });
+    }
+
+    const posHeaders = ['ticker','date','days','quantity','pmc','pmc_instrument','current_price','current_value','current_value_instrument','unrealized_pl','unrealized_pl_instrument'];
 
     filtered.forEach(pos => {
         const tr = document.createElement('tr');
         tr.style.cursor = 'pointer';
         tr.onclick = () => goToTicker(pos.ticker);
+        
+        const isSignal = pos.quantity === 0 || Math.abs(pos.quantity) < 0.0001;
+        if (isSignal) tr.style.opacity = '0.6';
         
         const pnl = pos.unrealized_pl;
         const pnlColor = pnl >= 0 ? 'var(--up-color)' : 'var(--down-color)';
@@ -7674,22 +7819,58 @@ function renderPortfolioPositions() {
         const instrumentCurrency = pos.currency || curr;
         const pmcInstrument = pos.pmc_instrument ?? 0.0;
         
+        const openDate = pos.open_date || '';
+        const days = openDate ? Math.floor((now - new Date(openDate)) / 86400000) : 0;
+
         tr.innerHTML = `
-            <td><a href="#" class="ticker-link" onclick="event.stopPropagation(); event.preventDefault(); goToTicker('${pos.ticker}')">${pos.ticker}</a></td>
-            <td>${pos.quantity.toFixed(0)}</td>
-            <td>${pos.pmc.toFixed(2)} ${curr}</td>
-            <td>${pmcInstrument.toFixed(2)} ${instrumentCurrency}</td>
-            <td>${pos.current_price.toFixed(2)} ${instrumentCurrency}</td>
-            <td>${pos.current_value.toFixed(2)} ${curr}</td>
-            <td>${(pos.current_value_instrument ?? 0).toFixed(2)} ${instrumentCurrency}</td>
-            <td style="color: ${pnlColor}; font-weight: bold;">${pnl.toFixed(2)} ${curr}</td>
-            <td style="color: ${pnlInstrumentColor}; font-weight: bold;">${pnlInstrument.toFixed(2)} ${instrumentCurrency}</td>
+            <td><a href="#" class="ticker-link" onclick="event.stopPropagation(); event.preventDefault(); goToTicker('${pos.ticker}')">${pos.ticker}</a>${isSignal ? ' <span style="color: var(--accent-color); font-size: 0.7rem;" title="Segnale - posizione non ancora aperta">[SEGNALE]</span>' : ''}</td>
+            <td>${openDate || '—'}</td>
+            <td>${openDate ? days : '—'}</td>
+            <td>${isSignal ? '—' : pos.quantity.toFixed(0)}</td>
+            <td>${isSignal ? '—' : pos.pmc.toFixed(2) + ' ' + curr}</td>
+            <td>${isSignal ? '—' : pmcInstrument.toFixed(2) + ' ' + instrumentCurrency}</td>
+            <td>${pos.current_price ? pos.current_price.toFixed(2) + ' ' + instrumentCurrency : '—'}</td>
+            <td>${isSignal ? '—' : pos.current_value.toFixed(2) + ' ' + curr}</td>
+            <td>${isSignal ? '—' : (pos.current_value_instrument ?? 0).toFixed(2) + ' ' + instrumentCurrency}</td>
+            <td style="color: ${pnlColor}; font-weight: bold;">${isSignal ? '—' : pnl.toFixed(2) + ' ' + curr}</td>
+            <td style="color: ${pnlInstrumentColor}; font-weight: bold;">${isSignal ? '—' : pnlInstrument.toFixed(2) + ' ' + instrumentCurrency}</td>
             <td>
-                <button class="header-btn danger small" onclick="event.stopPropagation(); closePositionModal('${pos.ticker}', ${pos.quantity}, ${pos.current_price})">Chiudi</button>
+                ${isSignal 
+                    ? `<button class="header-btn small" style="background: var(--success-color);" onclick="event.stopPropagation(); openBuyModal('${pos.ticker}')">Apri</button>` 
+                    : `<button class="header-btn danger small" onclick="event.stopPropagation(); closePositionModal('${pos.ticker}', ${pos.quantity}, ${pos.current_price})">Chiudi</button>`}
             </td>
         `;
         tbody.appendChild(tr);
     });
+    updateSortArrows('pos-header-row', posSortState);
+}
+
+function toggleHistSort(key) {
+    if (histSortState.key === key) {
+        histSortState.dir = histSortState.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+        histSortState.key = key;
+        histSortState.dir = 'asc';
+    }
+    renderPortfolioHistory();
+}
+
+function updateSortArrows(rowId, sortState) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+    row.querySelectorAll('th .sort-arrow').forEach(s => s.textContent = '');
+    if (sortState.key) {
+        const ths = row.querySelectorAll('th.sortable-th');
+        const keys = ['ticker','date','days','quantity','pmc','pmc_instrument','current_price','current_value','current_value_instrument','unrealized_pl','unrealized_pl_instrument'];
+        if (rowId === 'hist-header-row') {
+            const hkeys = ['date','ticker','type','quantity','price','cvBase','cvVal','currency','fx','comm'];
+            const idx = hkeys.indexOf(sortState.key);
+            if (idx >= 0 && ths[idx]) ths[idx].querySelector('.sort-arrow').textContent = sortState.dir === 'asc' ? ' ▲' : ' ▼';
+        } else {
+            const idx = keys.indexOf(sortState.key);
+            if (idx >= 0 && ths[idx]) ths[idx].querySelector('.sort-arrow').textContent = sortState.dir === 'asc' ? ' ▲' : ' ▼';
+        }
+    }
 }
 
 async function loadTransactionsHistory() {
@@ -7709,20 +7890,21 @@ function renderPortfolioHistory() {
     if (!tbody) return;
     tbody.innerHTML = '';
     
+    const vh = (id) => document.getElementById(id)?.value.toLowerCase() || '';
     const filters = {
-        date: document.getElementById('hist-filter-date')?.value.toLowerCase() || '',
-        ticker: document.getElementById('hist-filter-ticker')?.value.toLowerCase() || '',
-        type: document.getElementById('hist-filter-type')?.value.toLowerCase() || '',
-        qty: document.getElementById('hist-filter-qty')?.value.toLowerCase() || '',
-        price: document.getElementById('hist-filter-price')?.value.toLowerCase() || '',
-        cvBase: document.getElementById('hist-filter-cv-base')?.value.toLowerCase() || '',
-        cvVal: document.getElementById('hist-filter-cv-val')?.value.toLowerCase() || '',
-        currency: document.getElementById('hist-filter-currency')?.value.toLowerCase() || '',
-        fx: document.getElementById('hist-filter-fx')?.value.toLowerCase() || '',
-        comm: document.getElementById('hist-filter-comm')?.value.toLowerCase() || ''
+        dateMin: vh('hist-filter-date-min'), dateMax: vh('hist-filter-date-max'),
+        ticker: vh('hist-filter-ticker'),
+        type: vh('hist-filter-type'),
+        qtyMin: vh('hist-filter-qty-min'), qtyMax: vh('hist-filter-qty-max'),
+        priceMin: vh('hist-filter-price-min'), priceMax: vh('hist-filter-price-max'),
+        cvBaseMin: vh('hist-filter-cv-base-min'), cvBaseMax: vh('hist-filter-cv-base-max'),
+        cvValMin: vh('hist-filter-cv-val-min'), cvValMax: vh('hist-filter-cv-val-max'),
+        currency: vh('hist-filter-currency'),
+        fxMin: vh('hist-filter-fx-min'), fxMax: vh('hist-filter-fx-max'),
+        commMin: vh('hist-filter-comm-min'), commMax: vh('hist-filter-comm-max')
     };
 
-    const filtered = currentTransactions.filter(t => {
+    let filtered = currentTransactions.filter(t => {
         const d = new Date(t.date);
         const day = String(d.getDate()).padStart(2, '0');
         const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -7730,22 +7912,46 @@ function renderPortfolioHistory() {
         const hours = String(d.getHours()).padStart(2, '0');
         const minutes = String(d.getMinutes()).padStart(2, '0');
         const formattedDate = `${day}/${month}/${year} ${hours}:${minutes}`;
+        const dateSortable = `${year}-${month}-${day}`;
 
         const cvVal = (t.price || 0) * (t.quantity || 0);
         const cvBase = cvVal * (t.exchange_rate || 1.0);
 
-        if (filters.date && !formattedDate.toLowerCase().includes(filters.date)) return false;
+        if (filters.dateMin && dateSortable < filters.dateMin) return false;
+        if (filters.dateMax && dateSortable > filters.dateMax) return false;
         if (filters.ticker && (!t.ticker || !t.ticker.toLowerCase().includes(filters.ticker))) return false;
         if (filters.type && (!t.type || !t.type.toLowerCase().includes(filters.type))) return false;
-        if (filters.qty && (t.quantity == null || !t.quantity.toFixed(0).includes(filters.qty))) return false;
-        if (filters.price && (t.price == null || !t.price.toFixed(4).includes(filters.price))) return false;
-        if (filters.cvBase && !cvBase.toFixed(2).includes(filters.cvBase)) return false;
-        if (filters.cvVal && !cvVal.toFixed(2).includes(filters.cvVal)) return false;
+        if (filters.qtyMin !== '' && (t.quantity == null || t.quantity < parseFloat(filters.qtyMin))) return false;
+        if (filters.qtyMax !== '' && (t.quantity == null || t.quantity > parseFloat(filters.qtyMax))) return false;
+        if (filters.priceMin !== '' && (t.price == null || t.price < parseFloat(filters.priceMin))) return false;
+        if (filters.priceMax !== '' && (t.price == null || t.price > parseFloat(filters.priceMax))) return false;
+        if (filters.cvBaseMin !== '' && cvBase < parseFloat(filters.cvBaseMin)) return false;
+        if (filters.cvBaseMax !== '' && cvBase > parseFloat(filters.cvBaseMax)) return false;
+        if (filters.cvValMin !== '' && cvVal < parseFloat(filters.cvValMin)) return false;
+        if (filters.cvValMax !== '' && cvVal > parseFloat(filters.cvValMax)) return false;
         if (filters.currency && (!t.instrument_currency || !t.instrument_currency.toLowerCase().includes(filters.currency))) return false;
-        if (filters.fx && (t.exchange_rate == null || !t.exchange_rate.toFixed(4).includes(filters.fx))) return false;
-        if (filters.comm && (t.commission == null || !t.commission.toFixed(2).includes(filters.comm))) return false;
+        if (filters.fxMin !== '' && (t.exchange_rate == null || t.exchange_rate < parseFloat(filters.fxMin))) return false;
+        if (filters.fxMax !== '' && (t.exchange_rate == null || t.exchange_rate > parseFloat(filters.fxMax))) return false;
+        if (filters.commMin !== '' && (t.commission == null || t.commission < parseFloat(filters.commMin))) return false;
+        if (filters.commMax !== '' && (t.commission == null || t.commission > parseFloat(filters.commMax))) return false;
         return true;
     });
+
+    if (histSortState.key) {
+        const k = histSortState.key;
+        const d = histSortState.dir === 'asc' ? 1 : -1;
+        filtered.sort((a, b) => {
+            let va, vb;
+            if (k === 'date') { va = a.date || ''; vb = b.date || ''; return String(va).localeCompare(String(vb)) * d; }
+            if (k === 'ticker') { va = a.ticker || ''; vb = b.ticker || ''; return va.localeCompare(vb) * d; }
+            if (k === 'type') { va = a.type || ''; vb = b.type || ''; return va.localeCompare(vb) * d; }
+            if (k === 'currency') { va = a.instrument_currency || ''; vb = b.instrument_currency || ''; return va.localeCompare(vb) * d; }
+            if (k === 'cvBase') { va = (a.price||0)*(a.quantity||0)*(a.exchange_rate||1); vb = (b.price||0)*(b.quantity||0)*(b.exchange_rate||1); return (va-vb)*d; }
+            if (k === 'cvVal') { va = (a.price||0)*(a.quantity||0); vb = (b.price||0)*(b.quantity||0); return (va-vb)*d; }
+            va = a[k] ?? 0; vb = b[k] ?? 0;
+            return (va - vb) * d;
+        });
+    }
 
     filtered.forEach(t => {
             const tr = document.createElement('tr');
@@ -7778,6 +7984,7 @@ function renderPortfolioHistory() {
             `;
             tbody.appendChild(tr);
         });
+    updateSortArrows('hist-header-row', histSortState);
 }
 
 function getTransTypeColor(type) {
@@ -7965,6 +8172,25 @@ if (document.getElementById('add-transaction-btn')) {
         
         updateAutomaticExchangeRate();
     };
+}
+
+function openBuyModal(ticker) {
+    editingTransactionId = null;
+    const titleEl = document.getElementById('transaction-modal-title');
+    if (titleEl) titleEl.textContent = "Nuova Transazione";
+
+    const modal = document.getElementById('transaction-modal');
+    modal.classList.remove('hidden');
+    document.getElementById('trans-type').value = 'BUY';
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    const val = now.toISOString().slice(0, 16);
+    if (transDatePickr) transDatePickr.setDate(val, false);
+    else document.getElementById('trans-date').value = val;
+    document.getElementById('trans-ticker').value = ticker;
+    document.getElementById('trans-short-fee-row').style.display = 'none';
+    
+    updateAutomaticExchangeRate();
 }
 
 if (document.getElementById('close-position-top-btn')) {

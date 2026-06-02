@@ -196,6 +196,9 @@ header {
 #monitoring-view {
     overflow-y: auto;
 }
+#portfolio-view {
+    overflow-y: auto;
+}
 #screening-view {
     min-height: 0;
     overflow: hidden;
@@ -1385,6 +1388,36 @@ canvas.drawing-layer.active {
     background: rgba(255, 255, 255, 0.08) !important;
 }
 
+/* Portfolio Positions Table Sticky Header */
+#pos-header-row th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: var(--card-bg);
+}
+
+#portfolio-positions-container .filter-row th {
+    position: sticky;
+    top: 42px;
+    z-index: 10;
+    background-color: var(--card-bg);
+}
+
+/* Portfolio History Table Sticky Header */
+#hist-header-row th {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background-color: var(--card-bg);
+}
+
+#portfolio-history-container .filter-row th {
+    position: sticky;
+    top: 42px;
+    z-index: 10;
+    background-color: var(--card-bg);
+}
+
 #portfolio-positions-table th, #portfolio-history-table th {
     text-align: left;
     padding: 10px;
@@ -1443,4 +1476,88 @@ canvas.drawing-layer.active {
     top: 42px;
     z-index: 9;
     background-color: var(--card-bg);
+}
+
+/* --- Portfolio Collapsible Cards --- */
+.collapsible-header {
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+    position: relative;
+    padding-right: 20px;
+}
+
+.collapsible-header::before {
+    content: "\25B6";
+    font-size: 0.65rem;
+    margin-right: 10px;
+    transition: transform 0.2s ease;
+    flex-shrink: 0;
+    color: var(--text-secondary);
+}
+
+.collapsed .collapsible-header::before {
+    transform: rotate(0deg);
+}
+
+:not(.collapsed) > .collapsible-header::before {
+    transform: rotate(90deg);
+}
+
+.collapsible-header:hover {
+    background-color: rgba(255, 255, 255, 0.03);
+    border-radius: 8px;
+}
+
+.collapsed .collapsible-body {
+    display: none;
+}
+
+.table-scroll-wrapper {
+    max-height: 500px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+}
+
+#portfolio-positions-container .table-scroll-wrapper {
+    max-height: 650px;
+}
+
+/* --- Sortable Table Headers --- */
+.sortable-th {
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+}
+
+.sortable-th:hover {
+    background-color: rgba(255, 255, 255, 0.05);
+}
+
+.sort-arrow {
+    font-size: 0.7rem;
+    color: var(--accent-color);
+}
+
+/* --- Min/Max Filter Inputs --- */
+.minmax-filter {
+    display: flex;
+    gap: 2px;
+}
+
+.minmax-filter input {
+    width: 48%;
+    padding: 3px 4px;
+    font-size: 0.75rem;
+    border: 1px solid var(--border-color);
+    border-radius: 3px;
+    background: var(--card-bg);
+    color: var(--text-color);
+}
+
+.minmax-filter input::placeholder {
+    color: var(--text-secondary);
+    font-size: 0.65rem;
 }
