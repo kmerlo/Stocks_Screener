@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Financial Screener & Monitor</title>
-    <link rel="stylesheet" href="style.css?v=2">
+    <link rel="stylesheet" href="style.css?v=4">
     <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css">
@@ -41,17 +41,20 @@
                 <!-- Group for monitoring-specific controls (hidden in other views) -->
                 <div id="monitoring-controls-group" class="header-group">
                     <div class="header-group">
-                        <label>Ticker:</label>
-                        <select id="ticker-select" style="min-width: 120px;">
-                            <option value="">Select ticker...</option>
-                        </select>
-                    </div>
-                    <div class="header-group">
                         <label>TF:</label>
                         <select id="timeframe-select" style="min-width: 80px;">
                             <option value="D">Daily</option>
                             <option value="W">Weekly</option>
                             <option value="M">Monthly</option>
+                        </select>
+                    </div>
+                    <div class="header-group">
+                        <label>Grafici:</label>
+                        <select id="chart-count-select" onchange="changeChartCount(parseInt(this.value))" style="width: 56px; font-size: 0.8rem; padding: 2px 4px; height: 28px;">
+                            <option value="1" selected>1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
                         </select>
                     </div>
                     <button id="refresh-chart-btn" class="header-btn secondary">Refresh</button>
@@ -252,10 +255,60 @@
 
                 <!-- Main Chart and Subplots -->
                 <div id="chart-and-fundamentals-wrapper" style="display: flex; flex-direction: column; gap: 0; position: relative;">
-                    <div id="chart-panes-container" style="flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 10px;">
-                        <div class="drawing-canvas-container">
-                            <div id="chart-container"></div>
-                            <canvas id="drawing-layer" class="drawing-layer"></canvas>
+                    <div id="chart-panes-container" style="flex: 1; min-width: 0;">
+                        <div id="chart-grid">
+                            <div class="chart-slot" data-slot="0">
+                                <div class="chart-slot-header">
+                                    <select class="chart-slot-ticker" data-slot="0">
+                                        <option value="">Grafico 1...</option>
+                                    </select>
+                                    <span class="chart-slot-name" data-slot="0"></span>
+                                </div>
+                                <div class="drawing-canvas-container">
+                                    <div class="chart-container-inner" data-slot="0"></div>
+                                    <canvas class="drawing-layer" data-slot="0"></canvas>
+                                </div>
+                                <div class="chart-slot-subplots" data-slot="0"></div>
+                            </div>
+                            <div class="chart-slot" data-slot="1">
+                                <div class="chart-slot-header">
+                                    <select class="chart-slot-ticker" data-slot="1">
+                                        <option value="">Grafico 2...</option>
+                                    </select>
+                                    <span class="chart-slot-name" data-slot="1"></span>
+                                </div>
+                                <div class="drawing-canvas-container">
+                                    <div class="chart-container-inner" data-slot="1"></div>
+                                    <canvas class="drawing-layer" data-slot="1"></canvas>
+                                </div>
+                                <div class="chart-slot-subplots" data-slot="1"></div>
+                            </div>
+                            <div class="chart-slot" data-slot="2">
+                                <div class="chart-slot-header">
+                                    <select class="chart-slot-ticker" data-slot="2">
+                                        <option value="">Grafico 3...</option>
+                                    </select>
+                                    <span class="chart-slot-name" data-slot="2"></span>
+                                </div>
+                                <div class="drawing-canvas-container">
+                                    <div class="chart-container-inner" data-slot="2"></div>
+                                    <canvas class="drawing-layer" data-slot="2"></canvas>
+                                </div>
+                                <div class="chart-slot-subplots" data-slot="2"></div>
+                            </div>
+                            <div class="chart-slot" data-slot="3">
+                                <div class="chart-slot-header">
+                                    <select class="chart-slot-ticker" data-slot="3">
+                                        <option value="">Grafico 4...</option>
+                                    </select>
+                                    <span class="chart-slot-name" data-slot="3"></span>
+                                </div>
+                                <div class="drawing-canvas-container">
+                                    <div class="chart-container-inner" data-slot="3"></div>
+                                    <canvas class="drawing-layer" data-slot="3"></canvas>
+                                </div>
+                                <div class="chart-slot-subplots" data-slot="3"></div>
+                            </div>
                         </div>
                     </div>
 
@@ -1245,7 +1298,7 @@
         </div>
 
 
-    <script src="script.js?v=4"></script>
+    <script src="script.js?v=9"></script>
 </body>
 
 </html>

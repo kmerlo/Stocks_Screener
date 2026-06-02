@@ -5,8 +5,7 @@ let activeTicker = null;
 let activeTickerName = null;
 let mainChart = null;
 let priceSeries = null;
-let mainLegend = null; // Defined here
-let currentSeriesType = 'candle'; // 'candle' or 'line'
+let mainLegend = null;
 let activeIndicators = []; // [{ id, type, params, paneIndex, seriesList: [] }]
 let secondaryCharts = []; // [{ chart, container, paneIndex, type, legend, series: [] }]
 let activePriceData = []; // Store current candles for syncing subplots
@@ -18,7 +17,7 @@ let lastScreeningResults = [];
 let screeningResultsCache = {}; // { sheetId: results[] }
 let screeningSort = { column: 'symbol', order: 'asc' };
 let dynamicFilters = {}; // { columnKey: { min, max } } 
-const seriesDataMap = new Map(); // series -> Map<"YYYY-MM-DD", dataPoint>
+let seriesDataMap = new Map(); // series -> Map<"YYYY-MM-DD", dataPoint>
 let subUniverseSymbols = null; // List of symbols to filter by for screening
 let lastFilteredSymbols = []; // Symbols currently visible after filtering
 let tickerMappingsLookup = new Map(); // symbol_investing -> symbol_yahoo
@@ -28,6 +27,171 @@ let isSyncing = false;
 let isSyncingCrosshair = false;
 let syncAnimationFrame = null;
 let syncCrosshairAnimationFrame = null;
+
+// --- Multi-Chart Slot System ---
+const NUM_CHART_SLOTS = 4;
+let chartSlots = [];
+let activeChartIndex = 0;
+let activeChartCount = 1;
+
+function initChartSlots() {
+    chartSlots = [];
+    for (let i = 0; i < NUM_CHART_SLOTS; i++) {
+        chartSlots[i] = {
+            index: i,
+            chart: null,
+            priceSeries: null,
+            legend: null,
+            container: null,
+            ticker: '',
+            tickerName: '',
+            activeIndicators: [],
+            secondaryCharts: [],
+            seriesDataMap: new Map(),
+            activePriceData: [],
+            currentSeriesType: 'candle',
+            canvas: null,
+            ctx: null,
+        };
+    }
+    activeChartIndex = 0;
+}
+
+function activateChartSlot(index) {
+    if (index < 0 || index >= NUM_CHART_SLOTS) return;
+    if (activeChartIndex === index && mainChart !== null) return;
+
+    if (mainChart !== null) saveActiveSlotState();
+    activeChartIndex = index;
+    restoreSlotState(index);
+
+    document.querySelectorAll('.chart-slot-header').forEach(h => h.classList.remove('active'));
+    document.querySelectorAll('.chart-slot').forEach(s => s.classList.remove('active'));
+    const header = document.querySelector(`.chart-slot-header[data-slot="${index}"]`);
+    if (header) header.classList.add('active');
+    const slotEl = document.querySelector(`.chart-slot[data-slot="${index}"]`);
+    if (slotEl) slotEl.classList.add('active');
+
+    const slot = chartSlots[index];
+
+    const titleMain = document.getElementById('chart-title-main');
+    if (titleMain) {
+        titleMain.textContent = slot.tickerName
+            ? `${slot.ticker} - ${slot.tickerName}`
+            : (slot.ticker || 'Select a ticker');
+    }
+
+    const nameSpan = document.querySelector(`.chart-slot-name[data-slot="${index}"]`);
+    if (nameSpan) nameSpan.textContent = slot.tickerName || '';
+
+    updateVariation();
+    renderActiveIndicatorsUI();
+    reattachDrawingListeners();
+    if (slot.ticker) loadFundamentalData(slot.ticker);
+    setTimeout(() => resizeDrawingCanvas(), 50);
+}
+
+function saveActiveSlotState() {
+    const slot = chartSlots[activeChartIndex];
+    if (!slot) return;
+    slot.chart = mainChart;
+    slot.priceSeries = priceSeries;
+    slot.legend = mainLegend;
+    slot.ticker = activeTicker;
+    slot.tickerName = activeTickerName;
+    slot.activeIndicators = activeIndicators;
+    slot.secondaryCharts = secondaryCharts;
+    slot.seriesDataMap = seriesDataMap;
+    slot.activePriceData = activePriceData;
+    slot.canvas = drawingCanvas;
+    slot.ctx = drawingCtx;
+}
+
+function restoreSlotState(index) {
+    const slot = chartSlots[index];
+    if (!slot) return;
+    mainChart = slot.chart;
+    priceSeries = slot.priceSeries;
+    mainLegend = slot.legend;
+    activeTicker = slot.ticker;
+    activeTickerName = slot.tickerName;
+    activeIndicators = slot.activeIndicators;
+    secondaryCharts = slot.secondaryCharts;
+    seriesDataMap = slot.seriesDataMap;
+    activePriceData = slot.activePriceData;
+    drawingCanvas = slot.canvas;
+    drawingCtx = slot.ctx;
+}
+function setChartCount(n) {
+    n = Math.max(1, Math.min(4, n));
+    activeChartCount = n;
+
+    const grid = document.getElementById('chart-grid');
+    if (grid) {
+        grid.className = grid.className.replace(/\bcols-\d+\b/g, '').trim() + ` cols-${n}`;
+    }
+
+    for (let i = 0; i < NUM_CHART_SLOTS; i++) {
+        const slotEl = document.querySelector(`.chart-slot[data-slot="${i}"]`);
+        if (slotEl) {
+            slotEl.classList.toggle('hidden-slot', i >= n);
+        }
+    }
+
+    if (activeChartIndex >= n) {
+        activateChartSlot(0);
+    }
+
+    resizeAllCharts();
+}
+
+function changeChartCount(n) {
+    setChartCount(n);
+    autoPopulateEmptySlots();
+}
+
+async function autoPopulateEmptySlots() {
+    const firstSlotSelect = document.querySelector('.chart-slot-ticker');
+    if (!firstSlotSelect) return;
+    const tickers = Array.from(firstSlotSelect.options).map(o => o.value).filter(v => v);
+    if (tickers.length === 0) return;
+
+    const originalSlot = activeChartIndex;
+    const slot0Ticker = chartSlots[0].ticker;
+    let startIndex = tickers.indexOf(slot0Ticker);
+    if (startIndex === -1) startIndex = 0;
+
+    for (let i = 0; i < activeChartCount; i++) {
+        const slot = chartSlots[i];
+        if (slot.ticker) continue;
+        // Skip slot 0 if already handled (e.g. during init)
+        if (i === 0 && activeTicker) continue;
+
+        const listIdx = (startIndex + i) % tickers.length;
+        const symbol = tickers[listIdx];
+        const alreadyUsed = chartSlots.some((s, idx) =>
+            idx < activeChartCount && idx !== i && s.ticker === symbol
+        );
+        if (alreadyUsed) continue;
+
+        const slotSelect = document.querySelector(`.chart-slot-ticker[data-slot="${i}"]`);
+        if (slotSelect) slotSelect.value = symbol;
+
+        activateChartSlot(i);
+        activeTicker = symbol;
+        activeTickerName = null;
+        await updateChart(symbol);
+
+        const nameSpan = document.querySelector(`.chart-slot-name[data-slot="${i}"]`);
+        if (nameSpan) nameSpan.textContent = activeTickerName || '';
+        saveActiveSlotState();
+    }
+
+    if (activeChartIndex !== originalSlot) {
+        activateChartSlot(originalSlot);
+    }
+}
+
 let variationDebounceTimer = null; // Debounce for variation updates
 
 // Drawing Tools State
@@ -70,28 +234,36 @@ const syncChartsListener = (sourceChart) => {
     const range = sourceChart.timeScale().getVisibleLogicalRange();
     if (!range) return;
 
-    // Update Variation in dynamic title with debounce
-    if (sourceChart === mainChart) {
+    // Find the slot owning sourceChart (independent of activeChartIndex)
+    let ownerSlot = null;
+    for (const slot of chartSlots) {
+        if (slot.chart === sourceChart || slot.secondaryCharts.some(sc => sc.chart === sourceChart)) {
+            ownerSlot = slot;
+            break;
+        }
+    }
+    if (!ownerSlot) return;
+
+    // Update variation/UI only when interacting with the active chart
+    if (ownerSlot === chartSlots[activeChartIndex] && sourceChart === ownerSlot.chart) {
         if (variationDebounceTimer) clearTimeout(variationDebounceTimer);
         variationDebounceTimer = setTimeout(() => {
-            const range = sourceChart.timeScale().getVisibleLogicalRange();
-            if (range) {
-                const numBars = Math.round(range.to - range.from);
+            const r = sourceChart.timeScale().getVisibleLogicalRange();
+            if (r) {
+                const numBars = Math.round(r.to - r.from);
                 const visibleBarsInput = document.getElementById('visible-bars-input');
-                if (visibleBarsInput) {
-                    visibleBarsInput.value = numBars;
-                }
+                if (visibleBarsInput) visibleBarsInput.value = numBars;
                 updateVariation();
             }
         }, 500);
-        redrawAllDrawings();
+        requestAnimationFrame(redrawAllDrawings);
     }
 
     cancelAnimationFrame(syncAnimationFrame);
     syncAnimationFrame = requestAnimationFrame(() => {
         isSyncing = true;
         try {
-            const charts = [mainChart, ...secondaryCharts.map(sc => sc.chart)];
+            const charts = [ownerSlot.chart, ...ownerSlot.secondaryCharts.map(sc => sc.chart)];
             charts.forEach(c => {
                 if (c && c !== sourceChart) {
                     c.timeScale().setVisibleLogicalRange(range);
@@ -161,12 +333,22 @@ function updateVariation() {
 const syncCrosshairListener = (sourceChart, param) => {
     if (isSyncingCrosshair) return;
 
+    // Find the slot owning sourceChart
+    let ownerSlot = null;
+    for (const slot of chartSlots) {
+        if (slot.chart === sourceChart || slot.secondaryCharts.some(sc => sc.chart === sourceChart)) {
+            ownerSlot = slot;
+            break;
+        }
+    }
+    if (!ownerSlot) ownerSlot = chartSlots[activeChartIndex];
+
     cancelAnimationFrame(syncCrosshairAnimationFrame);
     syncCrosshairAnimationFrame = requestAnimationFrame(() => {
         isSyncingCrosshair = true;
         try {
             const time = param.time;
-            const allCharts = [{ chart: mainChart, series: [priceSeries], legend: mainLegend, isMain: true }, ...secondaryCharts];
+            const allCharts = [{ chart: ownerSlot.chart, series: [ownerSlot.priceSeries], legend: ownerSlot.legend, isMain: true }, ...ownerSlot.secondaryCharts];
 
             allCharts.forEach(item => {
                 const chart = item.chart;
@@ -179,20 +361,18 @@ const syncCrosshairListener = (sourceChart, param) => {
                             chart.clearCrosshairPosition();
                         }
                     } else {
-                        let targetSeries = item.isMain ? priceSeries : (item.series && item.series.length > 0 ? (item.series.length > 1 ? item.series[1] : item.series[0]) : null);
+                        let targetSeries = item.isMain ? ownerSlot.priceSeries : (item.series && item.series.length > 0 ? (item.series.length > 1 ? item.series[1] : item.series[0]) : null);
                         if (targetSeries) {
                             let yPrice = 0;
                             const tk = timeToStr(time);
-                            const dm = seriesDataMap.get(targetSeries);
+                            const dm = ownerSlot.seriesDataMap.get(targetSeries);
                             if (tk && dm) {
                                 const pt = dm.get(tk);
                                 if (pt) {
                                     yPrice = pt.value !== undefined ? pt.value : (pt.close !== undefined ? pt.close : 0);
                                 }
                             }
-                            try {
-                                chart.setCrosshairPosition(yPrice, time, targetSeries);
-                            } catch (e) { }
+                            try { chart.setCrosshairPosition(yPrice, time, targetSeries); } catch (e) { }
                         }
                     }
                 }
@@ -200,15 +380,12 @@ const syncCrosshairListener = (sourceChart, param) => {
                 // Update Legend
                 const legend = item.legend;
                 if (!legend) return;
-                if (!time) {
-                    legend.style.display = 'none';
-                    return;
-                }
+                if (!time) { legend.style.display = 'none'; return; }
                 legend.style.display = 'block';
 
                 if (item.isMain) {
                     const tk = timeToStr(time);
-                    const dataMap = seriesDataMap.get(priceSeries);
+                    const dataMap = ownerSlot.seriesDataMap.get(ownerSlot.priceSeries);
                     const data = tk && dataMap ? dataMap.get(tk) : null;
                     if (data) {
                         const o = data.open || data.value;
@@ -217,11 +394,10 @@ const syncCrosshairListener = (sourceChart, param) => {
                         const c = data.close || data.value;
                         const v = data.volume || 0;
 
-                        // Calculate ROC(1)
                         let roc1Str = "";
-                        const idx = activePriceData.findIndex(d => d.time === tk);
+                        const idx = ownerSlot.activePriceData.findIndex(d => d.time === tk);
                         if (idx > 0) {
-                            const prevClose = activePriceData[idx - 1].close;
+                            const prevClose = ownerSlot.activePriceData[idx - 1].close;
                             const roc1 = ((c / prevClose) - 1) * 100;
                             const color = roc1 >= 0 ? '#2ea043' : '#da3633';
                             const sign = roc1 >= 0 ? '+' : '';
@@ -236,10 +412,10 @@ const syncCrosshairListener = (sourceChart, param) => {
                             `V: <span style="color:var(--accent-color)">${v.toLocaleString()}</span>` +
                             roc1Str;
 
-                        activeIndicators.filter(ind => ind.paneIndex === 0 && ind.seriesList && ind.seriesList.length > 0 && ind.showLegend !== false)
+                        ownerSlot.activeIndicators.filter(ind => ind.paneIndex === 0 && ind.seriesList && ind.seriesList.length > 0 && ind.showLegend !== false)
                             .forEach(ind => {
                                 ind.seriesList.forEach(s => {
-                                    const indMap = seriesDataMap.get(s);
+                                    const indMap = ownerSlot.seriesDataMap.get(s);
                                     const indData = tk && indMap ? indMap.get(tk) : null;
                                     if (indData && indData.value !== undefined && indData.value !== null) {
                                         const color = ind.color || getRandomColor(ind.type);
@@ -256,11 +432,10 @@ const syncCrosshairListener = (sourceChart, param) => {
                         `<span style="color:var(--accent-color); font-weight:bold">${item.type.toUpperCase()}</span>: `;
                     let hasValue = false;
                     item.series.forEach(s => {
-                        // Find the indicator associated with this series
-                        const ind = activeIndicators.find(ai => ai.seriesList && ai.seriesList.includes(s));
-                        if (ind && ind.showLegend === false) return; // Skip if showLegend is false
+                        const ind = ownerSlot.activeIndicators.find(ai => ai.seriesList && ai.seriesList.includes(s));
+                        if (ind && ind.showLegend === false) return;
 
-                        const dataMap = seriesDataMap.get(s);
+                        const dataMap = ownerSlot.seriesDataMap.get(s);
                         const sData = tk && dataMap ? dataMap.get(tk) : null;
                         if (sData) {
                             const val = sData.value !== undefined ? sData.value : sData.close;
@@ -488,81 +663,149 @@ function resetChart() {
 // Chart Sync logic
 
 function initChart() {
-    console.log("Initializing chart...");
+    console.log("Initializing multi-chart system...");
     if (typeof LightweightCharts === 'undefined') {
         console.error("LightweightCharts library not found!");
         return;
     }
 
-    const chartContainer = document.getElementById('chart-container');
-    if (!chartContainer) return;
+    initChartSlots();
 
-    const mainHeightInput = document.getElementById('main-height-input');
-    const height = mainHeightInput ? parseInt(mainHeightInput.value) : 400;
+    for (let i = 0; i < NUM_CHART_SLOTS; i++) {
+        const container = document.querySelector(`.chart-container-inner[data-slot="${i}"]`);
+        if (!container) continue;
 
-    chartContainer.style.height = `${height}px`;
-    mainChart = createBaseChart(chartContainer, height);
-    console.log("[script.js] initChart: chart created, normalizing...");
-    normalizeChart(mainChart);
-    console.log("[script.js] initChart: normalized, creating legend...");
+        const slot = chartSlots[i];
+        slot.container = container;
 
-    // Create Main Legend
-    mainLegend = document.createElement('div');
-    mainLegend.className = 'chart-legend';
-    chartContainer.appendChild(mainLegend);
-    console.log("[script.js] initChart: legend added, adding candle series...");
+        const height = 200;
+        container.style.height = `${height}px`;
 
-    // Initial Price Series
-    priceSeries = mainChart.addCandlestickSeries({
-        upColor: '#2ea043', downColor: '#da3633',
-        borderDownColor: '#da3633', borderUpColor: '#2ea043',
-        wickDownColor: '#da3633', wickUpColor: '#2ea043',
-    });
-    console.log("[script.js] initChart: series added, subscribing to events...");
+        const chart = createBaseChart(container, height);
+        normalizeChart(chart);
+        slot.chart = chart;
 
-    // Subscription
-    mainChart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-        syncChartsListener(mainChart);
-        requestAnimationFrame(redrawAllDrawings);
-    });
-    console.log("[script.js] initChart: timeScale subscribed");
+        const legend = document.createElement('div');
+        legend.className = 'chart-legend';
+        container.appendChild(legend);
+        slot.legend = legend;
 
-    mainChart.subscribeCrosshairMove(param => {
-        syncCrosshairListener(mainChart, param);
-        requestAnimationFrame(redrawAllDrawings);
-    });
+        slot.priceSeries = chart.addCandlestickSeries({
+            upColor: '#2ea043', downColor: '#da3633',
+            borderDownColor: '#da3633', borderUpColor: '#2ea043',
+            wickDownColor: '#da3633', wickUpColor: '#2ea043',
+        });
 
-    mainChart.subscribeClick(async param => {
-        if (!param || !param.time) return;
-        const dateStr = timeToStr(param.time);
-        if (activeTicker) {
-            console.log("Chart clicked at:", dateStr, "for ticker:", activeTicker);
-            await loadHistoricalFundamentals(activeTicker, dateStr);
+        chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+            syncChartsListener(chart);
+            if (i === activeChartIndex) requestAnimationFrame(redrawAllDrawings);
+        });
+
+        chart.subscribeCrosshairMove(param => {
+            syncCrosshairListener(chart, param);
+            if (i === activeChartIndex) requestAnimationFrame(redrawAllDrawings);
+        });
+
+        chart.subscribeClick(async param => {
+            if (!param || !param.time) return;
+            const dateStr = timeToStr(param.time);
+            const ticker = chartSlots[i].ticker;
+            if (ticker) {
+                await loadHistoricalFundamentals(ticker, dateStr);
+            }
+        });
+
+        setTimeout(() => {
+            if (slot.priceSeries) {
+                try {
+                    const ps = slot.priceSeries.priceScale && slot.priceSeries.priceScale();
+                    if (ps && typeof ps.subscribeVisiblePriceRangeChange === 'function') {
+                        ps.subscribeVisiblePriceRangeChange(() => {
+                            if (i === activeChartIndex) requestAnimationFrame(redrawAllDrawings);
+                        });
+                    }
+                } catch (e) { /* priceScale not available in this LWC version */ }
+            }
+        }, 500);
+
+        const redrawValue = () => {
+            if (i === activeChartIndex) requestAnimationFrame(redrawAllDrawings);
+        };
+        container.addEventListener('wheel', redrawValue, { passive: true });
+        container.addEventListener('pointermove', redrawValue, { passive: true });
+        container.addEventListener('pointerdown', redrawValue, { passive: true });
+        container.addEventListener('pointerup', redrawValue, { passive: true });
+
+        const canvasEl = container.parentElement.querySelector('.drawing-layer');
+        if (canvasEl) {
+            slot.canvas = canvasEl;
+            slot.ctx = canvasEl.getContext('2d');
         }
+
+        const slotHeader = document.querySelector(`.chart-slot-header[data-slot="${i}"]`);
+        if (slotHeader) {
+            slotHeader.addEventListener('click', () => activateChartSlot(i));
+        }
+    }
+
+    activateChartSlot(0);
+    setChartCount(1);
+
+    document.querySelectorAll('.chart-slot-ticker').forEach(select => {
+        select.addEventListener('change', async (e) => {
+            const slotIndex = parseInt(e.target.dataset.slot);
+            const symbol = e.target.value;
+            if (!symbol) return;
+            // Activate the target slot so settings applied next (chart type, indicators,
+            // templates, etc.) act on the chart the user just modified.
+            activateChartSlot(slotIndex);
+            activeTicker = symbol;
+            activeTickerName = null;
+            // Persist the ticker onto the targeted slot BEFORE updateChart, so the slot
+            // is never observed as empty by anyone reading chartSlots[slotIndex].ticker.
+            if (chartSlots[slotIndex]) {
+                chartSlots[slotIndex].ticker = symbol;
+                chartSlots[slotIndex].tickerName = null;
+            }
+            await updateChart(symbol);
+            const nameSpan = document.querySelector(`.chart-slot-name[data-slot="${slotIndex}"]`);
+            if (nameSpan) nameSpan.textContent = activeTickerName || '';
+            saveActiveSlotState();
+        });
     });
 
-    // Handle price scale changes (Y-axis zoom/pan)
-    // Defer to avoid potential initialization hang in some browser/library versions
-    setTimeout(() => {
-        if (priceSeries) {
-            priceSeries.priceScale().subscribeVisiblePriceRangeChange(() => {
-                requestAnimationFrame(redrawAllDrawings);
+    // Clicking anywhere on a chart-slot activates it, so the user can select a chart
+    // by clicking its body (not just the thin header).
+    for (let i = 0; i < NUM_CHART_SLOTS; i++) {
+        const slotEl = document.querySelector(`.chart-slot[data-slot="${i}"]`);
+        if (slotEl) {
+            slotEl.addEventListener('click', (e) => {
+                // Skip clicks on the header and on the ticker select; those already
+                // have their own handlers and a header click triggers activateChartSlot.
+                if (e.target.closest('.chart-slot-header')) return;
+                activateChartSlot(i);
             });
         }
-    }, 500);
+    }
 
-    // Handle price scale dragging/zooming for drawings
-    const redrawValue = () => requestAnimationFrame(redrawAllDrawings);
-    chartContainer.addEventListener('wheel', redrawValue, { passive: true });
-    chartContainer.addEventListener('pointermove', redrawValue, { passive: true });
-    chartContainer.addEventListener('pointerdown', redrawValue, { passive: true });
-    chartContainer.addEventListener('pointerup', redrawValue, { passive: true });
-
-    window.addEventListener('resize', () => {
-        resizeAllCharts();
-    });
-
+    // Force layout and resize charts before loading any data
+    resizeAllCharts();
     loadTemplates();
+
+    // Wait for layout to settle, then load chart data
+    requestAnimationFrame(() => {
+        if (activeTicker) {
+            const slotSelect = document.querySelector(`.chart-slot-ticker[data-slot="${activeChartIndex}"]`);
+            if (slotSelect) slotSelect.value = activeTicker;
+            const nameSpan = document.querySelector(`.chart-slot-name[data-slot="${activeChartIndex}"]`);
+            if (nameSpan) nameSpan.textContent = activeTickerName || '';
+            updateChart(activeTicker).then(() => {
+                setTimeout(autoPopulateEmptySlots, 100);
+            });
+        } else {
+            setTimeout(autoPopulateEmptySlots, 100);
+        }
+    });
 }
 
 
@@ -585,16 +828,11 @@ function createBaseChart(container, height) {
         rightPriceScale: {
             borderColor: '#30363d',
             scaleMargins: { top: 0.1, bottom: 0.1 },
-            width: 100, // Locked for perfect horizontal alignment across panes
-        },
-        timeScale: {
-            borderColor: '#30363d',
-            timeVisible: true,
-            visible: true
+            width: 100,
         },
         handleScroll: {
             mouseWheel: true,
-            pressedMouseMove: true, // This enables PANNING on left-click drag
+            pressedMouseMove: true,
             horzTouchDrag: true,
             vertTouchDrag: true,
         },
@@ -775,25 +1013,66 @@ async function loadListDetails(listId, forceFirstTicker = false) {
     // Sort tickers alphabetically by symbol
     list.tickers.sort((a, b) => a.symbol.localeCompare(b.symbol));
 
-    // Update Ticker Select in Monitoring
-    const tickerSelect = document.getElementById('ticker-select');
-    tickerSelect.innerHTML = '<option value="">Select ticker...</option>';
-    list.tickers.forEach(t => {
-        const option = document.createElement('option');
-        option.value = t.symbol;
-        option.textContent = t.symbol;
-        tickerSelect.appendChild(option);
+    // Update per-slot ticker selects
+    document.querySelectorAll('.chart-slot-ticker').forEach((select, idx) => {
+        const currentVal = select.value;
+        const slotIdx = parseInt(select.dataset.slot);
+        select.innerHTML = '<option value="">Seleziona...</option>';
+        list.tickers.forEach(t => {
+            const opt = document.createElement('option');
+            opt.value = t.symbol;
+            opt.textContent = t.symbol;
+            select.appendChild(opt);
+        });
+        if (currentVal && list.tickers.some(t => t.symbol === currentVal)) {
+            select.value = currentVal;
+        } else {
+            // If the previously held ticker is not in the new list, clear stale slot state
+            // so autoPopulateEmptySlots can refill this slot with a valid ticker.
+            if (chartSlots[slotIdx] && chartSlots[slotIdx].ticker && !list.tickers.some(t => t.symbol === chartSlots[slotIdx].ticker)) {
+                chartSlots[slotIdx].ticker = '';
+                chartSlots[slotIdx].tickerName = '';
+                if (chartSlots[slotIdx].priceSeries) {
+                    try { chartSlots[slotIdx].priceSeries.setData([]); } catch (e) { }
+                }
+            }
+        }
     });
 
     // Auto-select the first ticker if none is active OR if forced (on list change in chart view)
     if ((forceFirstTicker || !activeTicker) && list.tickers.length > 0) {
         activeTicker = list.tickers[0].symbol;
         activeTickerName = list.tickers[0].name;
-        tickerSelect.value = activeTicker;
-        updateChart(activeTicker);
+        // Sync the active slot's select element to reflect the auto-selected ticker
+        const slotSelect = document.querySelector(`.chart-slot-ticker[data-slot="${activeChartIndex}"]`);
+        if (slotSelect) slotSelect.value = activeTicker;
+        const nameSpan = document.querySelector(`.chart-slot-name[data-slot="${activeChartIndex}"]`);
+        if (nameSpan) nameSpan.textContent = activeTickerName || '';
+        // Defer until charts are initialized (initChart runs after loadLists in the boot flow)
+        const runUpdate = () => {
+            if (!mainChart || chartSlots.length === 0) {
+                setTimeout(runUpdate, 50);
+                return;
+            }
+            updateChart(activeTicker).then(() => {
+                // Fill remaining empty slots with tickers from the new list
+                autoPopulateEmptySlots();
+            });
+        };
+        runUpdate();
     } else if (activeTicker) {
-        // Ensure the dropdown matches the activeTicker
-        tickerSelect.value = activeTicker;
+        // Even if we don't auto-select, refresh the active chart in case the list changed
+        const slotSelect = document.querySelector(`.chart-slot-ticker[data-slot="${activeChartIndex}"]`);
+        if (slotSelect) slotSelect.value = activeTicker;
+        // If the new list contains the active ticker, re-fill empty slots
+        const runPopulate = () => {
+            if (!mainChart || chartSlots.length === 0) {
+                setTimeout(runPopulate, 50);
+                return;
+            }
+            autoPopulateEmptySlots();
+        };
+        runPopulate();
     }
 
     // Update Ticker List in Management
@@ -913,6 +1192,7 @@ document.getElementById('scale-type-select').addEventListener('change', () => {
 
 async function updateChart(symbol) {
     if (!symbol) return;
+    if (!mainChart || chartSlots.length === 0) return;
 
     // Load drawings for this ticker
     await loadDrawings(symbol);
@@ -949,7 +1229,10 @@ async function updateChart(symbol) {
 
         mainChart.applyOptions({ rightPriceScale: { mode: scaleMode } });
 
-        if (currentSeriesType !== chartType) {
+        const slot = chartSlots[activeChartIndex];
+        if (!slot) return;
+
+        if (slot.currentSeriesType !== chartType) {
             mainChart.removeSeries(priceSeries);
             if (chartType === 'candle') {
                 priceSeries = mainChart.addCandlestickSeries({
@@ -960,7 +1243,7 @@ async function updateChart(symbol) {
             } else {
                 priceSeries = mainChart.addLineSeries({ color: '#2196f3', lineWidth: 2 });
             }
-            currentSeriesType = chartType;
+            slot.currentSeriesType = chartType;
         }
 
         const rawFormatted = data.map(d => ({
@@ -1026,6 +1309,7 @@ async function updateChart(symbol) {
                 to: lastIndex + rightOffsetBars
             });
         }
+        saveActiveSlotState();
     } catch (err) {
         console.error(`Error updating chart for ${symbol}:`, err);
     }
@@ -1149,6 +1433,14 @@ function deduplicateData(data) {
         }
     }
     return unique;
+}
+
+function getListTickers() {
+    const firstSlotSelect = document.querySelector('.chart-slot-ticker');
+    if (!firstSlotSelect) return [];
+    return Array.from(firstSlotSelect.options)
+        .map(o => o.value)
+        .filter(v => v);
 }
 
 // --- Indicator Management ---
@@ -1696,17 +1988,18 @@ function renderIndicatorData(data) {
 }
 
 function getOrCreatePane(index, type) {
-    let sc = secondaryCharts.find(c => c.paneIndex === index);
+    const slot = chartSlots[activeChartIndex];
+    let sc = slot.secondaryCharts.find(c => c.paneIndex === index);
     if (!sc) {
         const container = document.createElement('div');
-        container.classList.add('secondary-pane'); // Add class BEFORE chart init
+        container.classList.add('secondary-pane');
 
-        const subHeightInput = document.getElementById('sub-height-input');
-        const height = subHeightInput ? parseInt(subHeightInput.value) : 100;
-
+        const height = 60;
         container.style.height = `${height}px`;
-        container.id = `pane-${index}`;
-        document.getElementById('chart-panes-container').appendChild(container);
+        container.id = `pane-${slot.index}-${index}`;
+
+        const subplotsContainer = document.querySelector(`.chart-slot-subplots[data-slot="${slot.index}"]`);
+        if (subplotsContainer) subplotsContainer.appendChild(container);
 
         const newChart = createBaseChart(container, height);
         normalizeChart(newChart);
@@ -1715,80 +2008,70 @@ function getOrCreatePane(index, type) {
         legend.className = 'chart-legend';
         container.appendChild(legend);
 
-        // Sync
         newChart.timeScale().subscribeVisibleLogicalRangeChange(() => {
             if (window.syncChartsListener) window.syncChartsListener(newChart);
         });
 
-        // Crosshair Sync
         newChart.subscribeCrosshairMove(param => {
             if (window.syncCrosshairListener) window.syncCrosshairListener(newChart, param);
         });
 
         sc = { chart: newChart, container, paneIndex: index, type, legend, series: [] };
-        secondaryCharts.push(sc);
+        slot.secondaryCharts.push(sc);
         updatePanesVisibility();
     }
     return sc.chart;
 }
 
 function clearAllIndicators() {
-    // 1. Remove indicator series from main chart
-    activeIndicators.forEach(ind => {
+    const slot = chartSlots[activeChartIndex];
+    slot.activeIndicators.forEach(ind => {
         if (ind.paneIndex === 0 && ind.seriesList && ind.seriesList.length > 0) {
-            const chartObj = mainChart;
             ind.seriesList.forEach(s => {
-                try { chartObj.removeSeries(s); } catch (e) { }
+                try { slot.chart.removeSeries(s); } catch (e) { }
             });
             ind.seriesList = [];
         }
     });
 
-    // 2. Remove all secondary panes
-    secondaryCharts.forEach(sc => {
+    slot.secondaryCharts.forEach(sc => {
         try { sc.chart.remove(); } catch (e) { }
         try { sc.container.remove(); } catch (e) { }
     });
-    secondaryCharts = [];
+    slot.secondaryCharts = [];
     updatePanesVisibility();
 
-    // Re-align drawing canvas after layout changes caused by removing panes/series.
     setTimeout(() => resizeDrawingCanvas(), 150);
 }
 
 function removeSecondaryPane(index) {
-    const idx = secondaryCharts.findIndex(sc => sc.paneIndex === index);
+    const slot = chartSlots[activeChartIndex];
+    const idx = slot.secondaryCharts.findIndex(sc => sc.paneIndex === index);
     if (idx !== -1) {
-        secondaryCharts[idx].chart.remove();
-        secondaryCharts[idx].container.remove();
-        secondaryCharts.splice(idx, 1);
+        slot.secondaryCharts[idx].chart.remove();
+        slot.secondaryCharts[idx].container.remove();
+        slot.secondaryCharts.splice(idx, 1);
         updatePanesVisibility();
     }
 }
 
 function updatePanesVisibility() {
-    // 1. Determine which panes should be DOM-visible
+    const slot = chartSlots[activeChartIndex];
     const visiblePaneIndices = new Set(
-        activeIndicators
+        slot.activeIndicators
             .filter(ind => !ind.hidden && ind.paneIndex > 0)
             .map(ind => ind.paneIndex)
     );
 
-    secondaryCharts.forEach(sc => {
-        if (visiblePaneIndices.has(sc.paneIndex)) {
-            sc.container.style.display = 'block';
-        } else {
-            sc.container.style.display = 'none';
-        }
+    slot.secondaryCharts.forEach(sc => {
+        sc.container.style.display = visiblePaneIndices.has(sc.paneIndex) ? 'block' : 'none';
     });
 
-    // 2. Hide all timescales
-    mainChart.applyOptions({ timeScale: { visible: false } });
-    secondaryCharts.forEach(sc => sc.chart.applyOptions({ timeScale: { visible: false } }));
+    slot.chart.applyOptions({ timeScale: { visible: false } });
+    slot.secondaryCharts.forEach(sc => sc.chart.applyOptions({ timeScale: { visible: false } }));
 
-    // 3. Show only the last visible one
-    let visibleCharts = [{ chart: mainChart, paneIndex: 0 }];
-    secondaryCharts.forEach(sc => {
+    let visibleCharts = [{ chart: slot.chart, paneIndex: 0 }];
+    slot.secondaryCharts.forEach(sc => {
         if (visiblePaneIndices.has(sc.paneIndex)) {
             visibleCharts.push({ chart: sc.chart, paneIndex: sc.paneIndex });
         }
@@ -1883,22 +2166,21 @@ function yToPrice(y) {
 
 // --- Canvas init ---
 function initDrawingCanvas() {
-    drawingCanvas = document.getElementById('drawing-layer');
+    const slot = chartSlots[activeChartIndex];
+    if (!slot) return;
+    drawingCanvas = slot.canvas || document.querySelector('.drawing-layer');
     if (!drawingCanvas) return;
     drawingCtx = drawingCanvas.getContext('2d');
     resizeDrawingCanvas();
     setupDrawingMouseListeners();
 
-    // Watch the chart-container for size changes (e.g. when LWC adds/removes a left
-    // price scale for volume, which changes the chart-container's clientWidth/Height).
-    const container = document.getElementById('chart-container');
+    const container = slot.container || document.querySelector('.chart-container-inner');
     if (container && typeof ResizeObserver !== 'undefined') {
         new ResizeObserver(() => {
             resizeDrawingCanvas();
         }).observe(container);
     }
 
-    // Continuous sync loop to ensure drawings stick to moving charts perfectly
     function renderLoop() {
         if (activeTicker) {
             redrawAllDrawings();
@@ -1916,7 +2198,8 @@ function initDrawingCanvas() {
 // Must NOT call redrawAllDrawings() to avoid recursion.
 function syncDrawingCanvasSize() {
     if (!drawingCanvas || !mainChart) return;
-    const container = document.getElementById('chart-container');
+    const slot = chartSlots[activeChartIndex];
+    const container = slot?.container || document.querySelector('.chart-container-inner');
     if (!container) return;
 
     // LWC creates multiple panes/canvases. The main candlestick pane is typically the widest.
@@ -2097,8 +2380,36 @@ function setDrawingTool(tool) {
 }
 
 // --- Mouse listeners ---
-function setupDrawingMouseListeners() {
+// Stored handler refs for per-slot canvas re-attachment
+let _drawingHandlers = null;
+
+function reattachDrawingListeners() {
+    const slot = chartSlots[activeChartIndex];
+    if (!slot) return;
+    drawingCanvas = slot.canvas;
+    drawingCtx = slot.ctx;
+
+    // Remove listeners from all canvases
+    document.querySelectorAll('.drawing-layer').forEach(c => {
+        if (_drawingHandlers) {
+            c.removeEventListener('click', _drawingHandlers.click);
+            c.removeEventListener('dblclick', _drawingHandlers.dblclick);
+            c.removeEventListener('mousedown', _drawingHandlers.mousedown);
+            c.removeEventListener('mousemove', _drawingHandlers.mousemove);
+            c.removeEventListener('contextmenu', _drawingHandlers.contextmenu);
+        }
+    });
+
     if (!drawingCanvas) return;
+    _drawingHandlers = buildDrawingHandlers();
+    drawingCanvas.addEventListener('click', _drawingHandlers.click);
+    drawingCanvas.addEventListener('dblclick', _drawingHandlers.dblclick);
+    drawingCanvas.addEventListener('mousedown', _drawingHandlers.mousedown);
+    drawingCanvas.addEventListener('mousemove', _drawingHandlers.mousemove);
+    (drawingCanvas.parentElement || drawingCanvas).addEventListener('contextmenu', _drawingHandlers.contextmenu);
+}
+
+function buildDrawingHandlers() {
     const needed = {
         horizontal_line: 1, vertical_line: 1, trend_line: 2, extended_line: 2, ray: 2, arrow: 2,
         rectangle: 2, circle: 2, triangle: 3, polyline: Infinity, brush: Infinity,
@@ -2106,12 +2417,11 @@ function setupDrawingMouseListeners() {
         text_label: 1, callout: 2, price_label: 1
     };
 
-    drawingCanvas.addEventListener('click', e => {
-        console.log("[script.js] drawingCanvas click event. currentDrawingTool:", currentDrawingTool);
+    function clickHandler(e) {
+        if (!drawingCanvas) return;
         if (currentDrawingTool === 'cursor') return;
         const rect = drawingCanvas.getBoundingClientRect();
         const x = e.clientX - rect.left, y = e.clientY - rect.top;
-        // ERASER
         if (currentDrawingTool === 'eraser') {
             const target = findNearestDrawing(x, y);
             if (target) { deleteDrawing(target); }
@@ -2119,7 +2429,6 @@ function setupDrawingMouseListeners() {
         }
         const time = xToTime(x), price = yToPrice(y);
         if (time == null || price == null) return;
-        // TEXT LABEL
         if (currentDrawingTool === 'text_label') {
             const text = prompt('Testo da inserire sul grafico:');
             if (!text) return;
@@ -2127,13 +2436,11 @@ function setupDrawingMouseListeners() {
             drawings.push(newDrawing);
             saveDrawing(newDrawing); redrawAllDrawings(); return;
         }
-        // PRICE LABEL
         if (currentDrawingTool === 'price_label') {
             const newDrawing = { type: 'price_label', ticker: activeTicker, points: [{ time, price }], color: getDrawColor(), lineWidth: getDrawWidth() };
             drawings.push(newDrawing);
             saveDrawing(newDrawing); redrawAllDrawings(); return;
         }
-        // CALLOUT
         if (currentDrawingTool === 'callout') {
             if (!activeDrawing) {
                 activeDrawing = { type: 'callout', ticker: activeTicker, points: [{ time, price }], color: getDrawColor(), lineWidth: getDrawWidth() };
@@ -2149,7 +2456,6 @@ function setupDrawingMouseListeners() {
                 redrawAllDrawings(); return;
             }
         }
-        // POLYLINE
         if (currentDrawingTool === 'polyline') {
             if (!activeDrawing) activeDrawing = { type: 'polyline', ticker: activeTicker, points: [], color: getDrawColor(), lineWidth: getDrawWidth() };
             activeDrawing.points.push({ time, price });
@@ -2163,9 +2469,9 @@ function setupDrawingMouseListeners() {
             saveDrawing(newDrawing); activeDrawing = null;
         }
         redrawAllDrawings();
-    });
+    }
 
-    drawingCanvas.addEventListener('dblclick', e => {
+    function dblclickHandler(e) {
         if (currentDrawingTool === 'polyline' && activeDrawing) {
             if (activeDrawing.points.length > 1) {
                 const newDrawing = { ...activeDrawing };
@@ -2175,24 +2481,20 @@ function setupDrawingMouseListeners() {
             activeDrawing = null;
             redrawAllDrawings();
         }
-    });
+    }
 
-    drawingCanvas.addEventListener('mousedown', e => {
+    function mousedownHandler(e) {
+        if (!drawingCanvas) return;
         const rect = drawingCanvas.getBoundingClientRect();
         const x = e.clientX - rect.left, y = e.clientY - rect.top;
         const time = xToTime(x), price = yToPrice(y);
-
         if (currentDrawingTool === 'modify') {
             const target = findNearestDrawing(x, y);
             if (target && time != null && price != null) {
-                // Check if we hit a specific point
                 let pIdx = -1;
                 for (let i = 0; i < target.points.length; i++) {
                     const px = timeToX(target.points[i].time), py = priceToY(target.points[i].price);
-                    if (px != null && py != null && Math.hypot(x - px, y - py) < 8) {
-                        pIdx = i;
-                        break;
-                    }
+                    if (px != null && py != null && Math.hypot(x - px, y - py) < 8) { pIdx = i; break; }
                 }
                 isDragging = true;
                 dragTarget = target;
@@ -2202,14 +2504,84 @@ function setupDrawingMouseListeners() {
             }
             return;
         }
-
         if (currentDrawingTool === 'brush') {
             if (time != null && price != null) {
                 activeDrawing = { type: 'brush', ticker: activeTicker, points: [{ time, price }], color: getDrawColor(), lineWidth: getDrawWidth() };
             }
         }
-    });
+    }
 
+    function mousemoveHandler(e) {
+        if (!drawingCanvas) return;
+        if (currentDrawingTool === 'cursor') return;
+        const rect = drawingCanvas.getBoundingClientRect();
+        lastMousePos = { x: e.clientX - rect.left, y: e.clientY - rect.top };
+        if (isDragging && dragTarget) {
+            const curTime = xToTime(lastMousePos.x), curPrice = yToPrice(lastMousePos.y);
+            if (curTime != null && curPrice != null && dragStartPos.time != null && dragStartPos.price != null) {
+                if (dragPointIndex !== -1) {
+                    dragTarget.points[dragPointIndex] = { time: curTime, price: curPrice };
+                } else {
+                    const pDelta = curPrice - dragStartPos.price;
+                    let tDeltaIdx = 0;
+                    const startIdx = activePriceData.findIndex(b => b.time === dragStartPos.time);
+                    const curIdx = activePriceData.findIndex(b => b.time === curTime);
+                    if (startIdx !== -1 && curIdx !== -1) tDeltaIdx = curIdx - startIdx;
+                    dragTarget.points = originalPoints.map(p => {
+                        let newTime = p.time;
+                        if (tDeltaIdx !== 0) {
+                            const pIdx = activePriceData.findIndex(b => b.time === p.time);
+                            if (pIdx !== -1 && activePriceData[pIdx + tDeltaIdx]) newTime = activePriceData[pIdx + tDeltaIdx].time;
+                        }
+                        return { time: newTime, price: p.price + pDelta };
+                    });
+                }
+                redrawAllDrawings();
+            }
+            return;
+        }
+        if (currentDrawingTool === 'brush' && activeDrawing) {
+            const time = xToTime(lastMousePos.x), price = yToPrice(lastMousePos.y);
+            if (time != null && price != null) { activeDrawing.points.push({ time, price }); redrawAllDrawings(); }
+            return;
+        }
+        if (currentDrawingTool === 'eraser') {
+            redrawAllDrawings();
+            const target = findNearestDrawing(lastMousePos.x, lastMousePos.y);
+            if (target && drawingCtx) {
+                drawingCtx.save();
+                drawingCtx.strokeStyle = '#da3633';
+                drawingCtx.lineWidth = (target.lineWidth || 1.5) + 4;
+                drawingCtx.globalAlpha = 0.5;
+                renderDrawing(drawingCtx, target, false);
+                drawingCtx.restore();
+            }
+            return;
+        }
+        if (activeDrawing && activeDrawing.points.length > 0) redrawAllDrawings();
+    }
+
+    function contextmenuHandler(e) {
+        if (!drawingCanvas) return;
+        const existingMenu = document.getElementById('drawing-ctx-menu');
+        if (existingMenu) { e.preventDefault(); dismissContextMenu(); return; }
+        if (activeDrawing && activeDrawing.points.length > 0) {
+            e.preventDefault(); activeDrawing = null; redrawAllDrawings(); return;
+        }
+        const rect = drawingCanvas.getBoundingClientRect();
+        const x = e.clientX - rect.left, y = e.clientY - rect.top;
+        if (x < 0 || x > rect.width || y < 0 || y > rect.height) return;
+        const target = findNearestDrawing(x, y);
+        if (target) { e.preventDefault(); showDrawingContextMenu(e.clientX, e.clientY, target); }
+        else if (currentDrawingTool !== 'cursor' && !activeDrawing) { e.preventDefault(); setDrawingTool('cursor'); }
+        else if (activeDrawing) { e.preventDefault(); activeDrawing = null; redrawAllDrawings(); }
+    }
+
+    return { click: clickHandler, dblclick: dblclickHandler, mousedown: mousedownHandler, mousemove: mousemoveHandler, contextmenu: contextmenuHandler };
+}
+
+function setupDrawingMouseListeners() {
+    // Attach global listeners once
     window.addEventListener('mouseup', () => {
         if (isDragging && dragTarget) {
             isDragging = false;
@@ -2228,101 +2600,11 @@ function setupDrawingMouseListeners() {
         }
     });
 
-    drawingCanvas.addEventListener('mousemove', e => {
-        if (currentDrawingTool === 'cursor') return;
-        const rect = drawingCanvas.getBoundingClientRect();
-        lastMousePos = { x: e.clientX - rect.left, y: e.clientY - rect.top };
-
-        if (isDragging && dragTarget) {
-            const curTime = xToTime(lastMousePos.x), curPrice = yToPrice(lastMousePos.y);
-            if (curTime != null && curPrice != null && dragStartPos.time != null && dragStartPos.price != null) {
-                if (dragPointIndex !== -1) {
-                    // Reshape: Move only one point
-                    dragTarget.points[dragPointIndex] = { time: curTime, price: curPrice };
-                } else {
-                    // Move: Shift all points
-                    const pDelta = curPrice - dragStartPos.price;
-                    let tDeltaIdx = 0;
-                    const startIdx = activePriceData.findIndex(b => b.time === dragStartPos.time);
-                    const curIdx = activePriceData.findIndex(b => b.time === curTime);
-                    if (startIdx !== -1 && curIdx !== -1) tDeltaIdx = curIdx - startIdx;
-
-                    dragTarget.points = originalPoints.map(p => {
-                        let newTime = p.time;
-                        if (tDeltaIdx !== 0) {
-                            const pIdx = activePriceData.findIndex(b => b.time === p.time);
-                            if (pIdx !== -1 && activePriceData[pIdx + tDeltaIdx]) {
-                                newTime = activePriceData[pIdx + tDeltaIdx].time;
-                            }
-                        }
-                        return { time: newTime, price: p.price + pDelta };
-                    });
-                }
-                redrawAllDrawings();
-            }
-            return;
-        }
-
-        if (currentDrawingTool === 'brush' && activeDrawing) {
-            const time = xToTime(lastMousePos.x), price = yToPrice(lastMousePos.y);
-            if (time != null && price != null) {
-                activeDrawing.points.push({ time, price });
-                redrawAllDrawings();
-            }
-            return;
-        }
-        if (currentDrawingTool === 'eraser') {
-            redrawAllDrawings();
-            const target = findNearestDrawing(lastMousePos.x, lastMousePos.y);
-            if (target && drawingCtx) {
-                drawingCtx.save();
-                drawingCtx.strokeStyle = '#da3633';
-                drawingCtx.lineWidth = (target.lineWidth || 1.5) + 4;
-                drawingCtx.globalAlpha = 0.5;
-                renderDrawing(drawingCtx, target, false);
-                drawingCtx.restore();
-            }
-            return;
-        }
-        if (activeDrawing && activeDrawing.points.length > 0) redrawAllDrawings();
-    });
-
-    (drawingCanvas.parentElement || drawingCanvas).addEventListener('contextmenu', e => {
-        const existingMenu = document.getElementById('drawing-ctx-menu');
-        if (existingMenu) { e.preventDefault(); dismissContextMenu(); return; }
-        if (activeDrawing && activeDrawing.points.length > 0) {
-            e.preventDefault();
-            activeDrawing = null;
-            redrawAllDrawings();
-            return;
-        }
-        const rect = drawingCanvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-
-        // Ensure click is within canvas bounds
-        if (x < 0 || x > rect.width || y < 0 || y > rect.height) return;
-
-        const target = findNearestDrawing(x, y);
-        if (target) {
-            e.preventDefault();
-            showDrawingContextMenu(e.clientX, e.clientY, target);
-        } else if (currentDrawingTool !== 'cursor' && !activeDrawing) {
-            // ONLY reset to cursor if there's no active tool or WE ARE NOT CURRENTLY DRAWING
-            console.log("[script.js] Context menu on empty space - resetting to cursor");
-            e.preventDefault();
-            setDrawingTool('cursor');
-        } else if (activeDrawing) {
-            // If drawing, just dismiss the active drawing but don't reset to cursor necessarily
-            e.preventDefault();
-            activeDrawing = null;
-            redrawAllDrawings();
-        }
-    });
-
     document.addEventListener('click', e => {
         if (!e.target.closest('#drawing-ctx-menu')) dismissContextMenu();
     });
+
+    reattachDrawingListeners();
 }
 
 // --- Main redraw ---
@@ -3289,9 +3571,7 @@ document.querySelectorAll('.nav-item').forEach(item => {
         }
 
         if (view === 'monitoring' && mainChart) {
-            // Force chart resize when showing view
-            const container = document.getElementById('chart-container');
-            mainChart.resize(container.clientWidth, container.clientHeight);
+            resizeAllCharts();
         }
 
         if (view === 'lists') {
@@ -3469,12 +3749,6 @@ if (deleteListBtn) {
     });
 }
 
-document.getElementById('ticker-select')?.addEventListener('change', (e) => {
-    activeTicker = e.target.value;
-    activeTickerName = null; // Reset to allow updateChart to re-find it
-    updateChart(activeTicker);
-});
-
 document.getElementById('create-list-btn')?.addEventListener('click', async () => {
     const name = document.getElementById('new-list-name').value;
     if (!name) return;
@@ -3576,9 +3850,7 @@ document.getElementById('update-data-btn')?.addEventListener('click', async () =
             alert("Please select a list first.");
             return;
         }
-        const tickerOptions = Array.from(document.getElementById('ticker-select').options)
-            .filter(opt => opt.value !== "")
-            .map(opt => opt.value);
+        const tickerOptions = getListTickers();
 
         if (tickerOptions.length === 0) {
             alert("The selected list has no tickers.");
@@ -3629,9 +3901,7 @@ document.getElementById('extend-history-btn').addEventListener('click', async ()
             alert("Please select a list first.");
             return;
         }
-        const tickerOptions = Array.from(document.getElementById('ticker-select').options)
-            .filter(opt => opt.value !== "")
-            .map(opt => opt.value);
+        const tickerOptions = getListTickers();
 
         if (tickerOptions.length === 0) {
             alert("The selected list has no tickers.");
@@ -3679,9 +3949,7 @@ document.getElementById('delete-ticker-data-btn').addEventListener('click', asyn
             alert("Please select a list first.");
             return;
         }
-        const tickerOptions = Array.from(document.getElementById('ticker-select').options)
-            .filter(opt => opt.value !== "")
-            .map(opt => opt.value);
+        const tickerOptions = getListTickers();
 
         if (tickerOptions.length === 0) {
             alert("The selected list has no tickers.");
@@ -3744,9 +4012,7 @@ document.getElementById('delete-data-from-date-btn')?.addEventListener('click', 
             alert("Seleziona prima una lista.");
             return;
         }
-        const tickerOptions = Array.from(document.getElementById('ticker-select').options)
-            .filter(opt => opt.value !== "")
-            .map(opt => opt.value);
+        const tickerOptions = getListTickers();
 
         if (tickerOptions.length === 0) {
             alert("La lista selezionata non ha ticker.");
@@ -3881,14 +4147,15 @@ async function showTickerDetails(symbol) {
     const navItem = document.querySelector('.nav-item[data-view="monitoring"]');
     if (navItem) navItem.click();
 
-    // Sync the ticker dropdown and global state
+    // Sync the global state
     activeTicker = symbol;
-    activeTickerName = null; // Reset so updateChart() fetches the correct name for the new ticker
-    const tickerSelect = document.getElementById('ticker-select');
-    if (tickerSelect && symbol) {
+    activeTickerName = null;
+
+    const slotSelect = document.querySelector(`.chart-slot-ticker[data-slot="${activeChartIndex}"]`);
+    if (slotSelect && symbol) {
         let exists = false;
-        for (let i = 0; i < tickerSelect.options.length; i++) {
-            if (tickerSelect.options[i].value === symbol) {
+        for (let i = 0; i < slotSelect.options.length; i++) {
+            if (slotSelect.options[i].value === symbol) {
                 exists = true;
                 break;
             }
@@ -3897,12 +4164,11 @@ async function showTickerDetails(symbol) {
             const opt = document.createElement('option');
             opt.value = symbol;
             opt.textContent = symbol;
-            tickerSelect.appendChild(opt);
+            slotSelect.appendChild(opt);
         }
-        tickerSelect.value = symbol;
+        slotSelect.value = symbol;
     }
 
-    // Update chart with the selected symbol
     await updateChart(symbol);
 }
 
@@ -4723,40 +4989,42 @@ function renderBaseScreeningTable(sheet) {
 }
 
 function resizeAllCharts() {
-    if (!mainChart) return;
-    const container = document.getElementById('chart-panes-container');
-    if (!container) return;
-    
-    const width = container.clientWidth;
-    let mh = parseInt(document.getElementById('main-height-input')?.value || '400');
-    const sh = parseInt(document.getElementById('sub-height-input')?.value || '100');
+    const wrapper = document.getElementById('chart-and-fundamentals-wrapper');
+    if (!wrapper) return;
+    const wrapperWidth = wrapper.clientWidth;
 
-    // If fundamentals are hidden or collapsed, and we want to expand, 
-    // we can calculate the available height. 
-    // For now, let's just use the input value but allow it to be flexible.
     const section = document.getElementById('ticker-fundamentals-section');
     const content = document.getElementById('fundamentals-collapsible-content');
-    
-    if (section && (section.classList.contains('hidden') || content?.classList.contains('hidden'))) {
-        // When collapsed, we might want to increase the height automatically if it's too small
-        const viewContainer = document.getElementById('monitoring-view');
-        if (viewContainer) {
-            const availableHeight = viewContainer.clientHeight - 150; // Leave space for toolbar and padding
-            if (availableHeight > mh) {
-                // Only auto-expand if available space is greater than user setting
-                mh = availableHeight - (secondaryCharts.length * (sh + 10));
-            }
-        }
+    let fundaHeight = 0;
+    if (section && !section.classList.contains('hidden') && content && !content.classList.contains('hidden')) {
+        fundaHeight = section.offsetHeight + 45;
     }
 
-    const mainChartContainer = document.getElementById('chart-container');
-    if (mainChartContainer) mainChartContainer.style.height = `${mh}px`;
-    mainChart.resize(width, mh);
-    
-    secondaryCharts.forEach(sc => {
-        sc.container.style.height = `${sh}px`;
-        sc.chart.resize(width, sh);
-    });
+    const availHeight = wrapper.clientHeight - fundaHeight - 5;
+    const gap = 8;
+    let colWidth, rowHeight;
+
+    if (activeChartCount === 4) {
+        const cols = 2;
+        rowHeight = Math.max(150, Math.floor((availHeight - gap) / cols));
+        colWidth = Math.floor((wrapperWidth - gap) / cols);
+    } else {
+        rowHeight = Math.max(150, Math.floor(availHeight));
+        colWidth = Math.floor((wrapperWidth - gap * (activeChartCount - 1)) / activeChartCount);
+    }
+
+    for (let i = 0; i < NUM_CHART_SLOTS; i++) {
+        const slot = chartSlots[i];
+        if (!slot || !slot.chart || !slot.container) continue;
+        slot.container.style.height = `${rowHeight}px`;
+        slot.chart.resize(colWidth, rowHeight);
+        const sh = 60;
+        slot.secondaryCharts.forEach(sc => {
+            sc.container.style.height = `${sh}px`;
+            sc.chart.resize(colWidth, sh);
+        });
+    }
+
     resizeDrawingCanvas();
 }
 
@@ -4799,6 +5067,15 @@ function initApp() {
     setupFundamentalsToggle();
     initChart();
     if (mainChart) normalizeChart(mainChart);
+
+    // Attach chart count listener early, before drawing tools
+    const chartCountSelect = document.getElementById('chart-count-select');
+    if (chartCountSelect) {
+        chartCountSelect.addEventListener('change', function(e) {
+            changeChartCount(parseInt(e.target.value));
+        });
+    }
+
     initDrawingTools();
 
     document.getElementById('sidebar-toggle').addEventListener('click', () => {
@@ -6881,8 +7158,8 @@ function applyFundamentalSortAndFilter() {
             activeTicker = item.symbol;
             document.querySelectorAll('.nav-item').forEach(i => i.classList.toggle('active', i.dataset.view === 'monitoring'));
             document.querySelectorAll('.view-container').forEach(v => v.classList.toggle('hidden', v.id !== 'monitoring-view'));
-            const tickerSelect = document.getElementById('ticker-select');
-            if (tickerSelect) tickerSelect.value = item.symbol;
+            const slotSelect = document.querySelector(`.chart-slot-ticker[data-slot="${activeChartIndex}"]`);
+            if (slotSelect) slotSelect.value = item.symbol;
             updateChart(item.symbol);
         };
         let cells = '';

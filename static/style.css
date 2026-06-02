@@ -277,22 +277,80 @@ select {
     outline: none;
 }
 
+#chart-grid {
+    display: grid;
+    gap: 8px;
+}
+#chart-grid.cols-1 { grid-template-columns: 1fr; grid-template-rows: 1fr; }
+#chart-grid.cols-2 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr; }
+#chart-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr; }
+#chart-grid.cols-4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
+
+.chart-slot.hidden-slot { display: none !important; }
+
+.chart-slot {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    transition: box-shadow 0.2s ease;
+}
+
+.chart-slot.active {
+    box-shadow: 0 0 0 2px var(--accent-color);
+    border-radius: 8px;
+}
+
+.chart-slot-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 8px;
+    background: rgba(255,255,255,0.03);
+    border-radius: 6px 6px 0 0;
+    cursor: pointer;
+    border: 1px solid transparent;
+    border-bottom: none;
+}
+
+.chart-slot-header.active {
+    background: rgba(88, 166, 255, 0.1);
+    border-color: var(--accent-color);
+}
+
+.chart-slot-ticker {
+    width: 130px;
+    padding: 2px 4px;
+    font-size: 0.8rem;
+    background: var(--bg-color);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+}
+
+.chart-slot-name {
+    font-size: 0.75rem;
+    color: #8b949e;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
 .drawing-canvas-container {
     position: relative;
     width: 100%;
-    margin-top: 20px;
     border: 1px solid var(--border-color);
     border-radius: 8px;
     background-color: #161b22;
 }
 
-#chart-container {
+.chart-container-inner {
     width: 100%;
-    height: 600px; /* Default height, will be overridden if parent is flex */
+    height: 300px; /* Default height, overridden by JS */
     position: relative;
     overflow: hidden;
     border-radius: 8px;
-    flex: 1; /* Allow it to grow */
+    flex: 1;
 }
 
 .fundamentals-toggle-btn {
@@ -328,21 +386,6 @@ select {
     opacity: 0;
     overflow: hidden;
     border: none;
-}
-
-.drawing-layer {
-    position: absolute;
-    top: 0;
-    left: 0;
-    pointer-events: none;
-    /* Let chart receive scroll events initially */
-    /* Let chart receive scroll events initially */
-    z-index: 10;
-}
-
-.drawing-layer.active {
-    pointer-events: auto;
-    /* Intercept events when drawing mode is active */
 }
 
 .chart-legend {
@@ -904,11 +947,6 @@ th {
     min-width: 32px;
     height: 32px;
     padding: 4px;
-}
-
-.drawing-canvas-container {
-    position: relative;
-    width: 100%;
 }
 
 canvas.drawing-layer {
