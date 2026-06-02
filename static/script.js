@@ -7489,6 +7489,7 @@ let portfoliosMap = new Map();
 let currentTransactions = [];
 let posSortState = { key: null, dir: 'asc' };
 let histSortState = { key: null, dir: 'asc' };
+let activePortfolioTotalValue = 0;
 let editingTransactionId = null;
 let transDatePickr = null;
 let cashDatePickr = null;
@@ -7497,6 +7498,11 @@ let deleteStartDatePickr = null;
 async function initPortfolioView() {
     await loadPortfolios();
     await loadCommissionPlans();
+    const select = document.getElementById('portfolio-select');
+    if (select && !select.value && select.options.length > 1) {
+        select.value = select.options[1].value;
+        select.dispatchEvent(new Event('change'));
+    }
 }
 
 async function loadPortfolios() {
@@ -7717,6 +7723,7 @@ function renderPortfolioSummary(data) {
     reEl.style.color = rePnl >= 0 ? 'var(--up-color)' : 'var(--down-color)';
 
     currentPortfolioPositions = data.positions;
+    activePortfolioTotalValue = summary.total_current_value;
     renderPortfolioPositions();
 }
 
@@ -7749,7 +7756,8 @@ function renderPortfolioPositions() {
         valueBaseMin: v('pos-filter-value-base-min'), valueBaseMax: v('pos-filter-value-base-max'),
         valueValMin: v('pos-filter-value-val-min'), valueValMax: v('pos-filter-value-val-max'),
         pnlBaseMin: v('pos-filter-pnl-base-min'), pnlBaseMax: v('pos-filter-pnl-base-max'),
-        pnlValMin: v('pos-filter-pnl-val-min'), pnlValMax: v('pos-filter-pnl-val-max')
+        pnlValMin: v('pos-filter-pnl-val-min'), pnlValMax: v('pos-filter-pnl-val-max'),
+        weightMin: v('pos-filter-weight-min'), weightMax: v('pos-filter-weight-max')
     };
 
     const now = new Date();
@@ -7781,6 +7789,8 @@ function renderPortfolioPositions() {
         if (!inMinMax(pos.current_value_instrument ?? 0, filters.valueValMin, filters.valueValMax)) return false;
         if (!inMinMax(pos.unrealized_pl, filters.pnlBaseMin, filters.pnlBaseMax)) return false;
         if (!inMinMax(pos.unrealized_pl_instrument ?? 0, filters.pnlValMin, filters.pnlValMax)) return false;
+        const weight = activePortfolioTotalValue > 0 ? (pos.current_value / activePortfolioTotalValue * 100) : 0;
+        if (!inMinMax(weight, filters.weightMin, filters.weightMax)) return false;
         return true;
     });
 
@@ -7796,12 +7806,17 @@ function renderPortfolioPositions() {
                 const db = b.open_date ? Math.floor((now - new Date(b.open_date)) / 86400000) : 0;
                 return (da - db) * d;
             }
+            if (k === 'weight') {
+                const wa = activePortfolioTotalValue > 0 ? (a.current_value / activePortfolioTotalValue * 100) : 0;
+                const wb = activePortfolioTotalValue > 0 ? (b.current_value / activePortfolioTotalValue * 100) : 0;
+                return (wa - wb) * d;
+            }
             va = a[k] ?? 0; vb = b[k] ?? 0;
             return (va - vb) * d;
         });
     }
 
-    const posHeaders = ['ticker','date','days','quantity','pmc','pmc_instrument','current_price','current_value','current_value_instrument','unrealized_pl','unrealized_pl_instrument'];
+    const posHeaders = ['ticker','date','days','quantity','pmc','pmc_instrument','current_price','current_value','current_value_instrument','unrealized_pl','unrealized_pl_instrument','weight'];
 
     filtered.forEach(pos => {
         const tr = document.createElement('tr');
@@ -7821,6 +7836,7 @@ function renderPortfolioPositions() {
         
         const openDate = pos.open_date || '';
         const days = openDate ? Math.floor((now - new Date(openDate)) / 86400000) : 0;
+        const weight = activePortfolioTotalValue > 0 ? (pos.current_value / activePortfolioTotalValue * 100) : 0;
 
         tr.innerHTML = `
             <td><a href="#" class="ticker-link" onclick="event.stopPropagation(); event.preventDefault(); goToTicker('${pos.ticker}')">${pos.ticker}</a>${isSignal ? ' <span style="color: var(--accent-color); font-size: 0.7rem;" title="Segnale - posizione non ancora aperta">[SEGNALE]</span>' : ''}</td>
@@ -7834,6 +7850,7 @@ function renderPortfolioPositions() {
             <td>${isSignal ? '—' : (pos.current_value_instrument ?? 0).toFixed(2) + ' ' + instrumentCurrency}</td>
             <td style="color: ${pnlColor}; font-weight: bold;">${isSignal ? '—' : pnl.toFixed(2) + ' ' + curr}</td>
             <td style="color: ${pnlInstrumentColor}; font-weight: bold;">${isSignal ? '—' : pnlInstrument.toFixed(2) + ' ' + instrumentCurrency}</td>
+            <td style="font-weight: bold;">${isSignal ? '—' : weight.toFixed(1) + '%'}</td>
             <td>
                 ${isSignal 
                     ? `<button class="header-btn small" style="background: var(--success-color);" onclick="event.stopPropagation(); openBuyModal('${pos.ticker}')">Apri</button>` 
@@ -7861,7 +7878,7 @@ function updateSortArrows(rowId, sortState) {
     row.querySelectorAll('th .sort-arrow').forEach(s => s.textContent = '');
     if (sortState.key) {
         const ths = row.querySelectorAll('th.sortable-th');
-        const keys = ['ticker','date','days','quantity','pmc','pmc_instrument','current_price','current_value','current_value_instrument','unrealized_pl','unrealized_pl_instrument'];
+        const keys = ['ticker','date','days','quantity','pmc','pmc_instrument','current_price','current_value','current_value_instrument','unrealized_pl','unrealized_pl_instrument','weight'];
         if (rowId === 'hist-header-row') {
             const hkeys = ['date','ticker','type','quantity','price','cvBase','cvVal','currency','fx','comm'];
             const idx = hkeys.indexOf(sortState.key);
