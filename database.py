@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, UniqueConstraint
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, UniqueConstraint, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.sql import func
@@ -104,6 +104,7 @@ class Drawing(Base):
     points = Column(String)  # JSON string of coordinates: [{"time": "...", "price": ...}]
     color = Column(String)
     line_width = Column(Float)
+    line_style = Column(String, default='solid')
     text = Column(String, nullable=True)
     
     alarms = relationship("Alarm", back_populates="drawing", cascade="all, delete-orphan")
@@ -262,6 +263,15 @@ class Transaction(Base):
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # Migration: add line_style column if it doesn't exist
+    try:
+        conn = engine.connect()
+        conn.execute(text("ALTER TABLE drawings ADD COLUMN line_style VARCHAR DEFAULT 'solid'"))
+        conn.commit()
+    except Exception:
+        pass  # Column already exists
+    finally:
+        conn.close()
 
 if __name__ == "__main__":
     init_db()

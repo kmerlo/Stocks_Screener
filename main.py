@@ -676,6 +676,7 @@ def sync_drawings(symbol: str, drawings_data: List[schemas.DrawingSync], db: Ses
                 points=json.dumps([p.model_dump() for p in d.points]),
                 color=d.color,
                 line_width=d.line_width,
+                line_style=d.line_style,
                 text=d.text
             )
             db.add(db_drawing)
@@ -695,6 +696,7 @@ def create_drawing(symbol: str, drawing_data: schemas.DrawingCreate, db: Session
             points=json.dumps([p.model_dump() for p in drawing_data.points]),
             color=drawing_data.color,
             line_width=drawing_data.line_width,
+            line_style=drawing_data.line_style,
             text=drawing_data.text
         )
         db.add(db_drawing)
@@ -716,6 +718,7 @@ def update_drawing(drawing_id: int, drawing_data: schemas.DrawingBase, db: Sessi
         db_drawing.points = json.dumps([p.model_dump() for p in drawing_data.points])
         db_drawing.color = drawing_data.color
         db_drawing.line_width = drawing_data.line_width
+        db_drawing.line_style = drawing_data.line_style
         db_drawing.text = drawing_data.text
         db.commit()
         db.refresh(db_drawing)

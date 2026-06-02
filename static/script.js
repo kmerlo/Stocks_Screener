@@ -208,6 +208,10 @@ let dragStartPos = { time: null, price: null };
 let dragPointIndex = -1; // -1 = move whole object, >=0 = move specific point
 let originalPoints = [];
 
+// Fixed left price scale width — ensures main chart and all subplots
+// have the same horizontal offset so bars align vertically.
+const LEFT_PRICE_SCALE_WIDTH = 60;
+
 // Normalization function to ensure all charts start and behave identically
 function normalizeChart(chart) {
     if (!chart) return;
@@ -223,7 +227,10 @@ function normalizeChart(chart) {
             autoScale: true,
         },
         leftPriceScale: {
-            visible: false,
+            visible: true,
+            width: LEFT_PRICE_SCALE_WIDTH,
+            borderColor: 'transparent',
+            autoScale: true,
         }
     });
 }
@@ -326,6 +333,21 @@ function updateVariation() {
         if (varElement) {
             varElement.textContent = `${sign}${variation.toFixed(2)}%`;
             varElement.style.color = color;
+        }
+    }
+
+    if (activePriceData.length >= 2) {
+        const lastBar = activePriceData[activePriceData.length - 1];
+        const prevBar = activePriceData[activePriceData.length - 2];
+        if (lastBar && prevBar && prevBar.close > 0) {
+            const dailyVar = ((lastBar.close - prevBar.close) / prevBar.close) * 100;
+            const dColor = dailyVar >= 0 ? '#2ea043' : '#da3633';
+            const dSign = dailyVar >= 0 ? '+' : '';
+            const dailyEl = document.getElementById('chart-title-daily-variation');
+            if (dailyEl) {
+                dailyEl.textContent = `Giorno: ${dSign}${dailyVar.toFixed(2)}%`;
+                dailyEl.style.color = dColor;
+            }
         }
     }
 }
@@ -690,6 +712,7 @@ function initChart() {
 
         const legend = document.createElement('div');
         legend.className = 'chart-legend';
+        legend.style.cssText = 'position:absolute; left:12px; top:2px; z-index:20; font-size:12px; font-family:monospace; color:#d1d4dc; background:rgba(22,27,34,0.7); padding:8px; border-radius:4px; pointer-events:none; line-height:1.5;';
         container.appendChild(legend);
         slot.legend = legend;
 
@@ -851,7 +874,10 @@ function createBaseChart(container, height) {
             shiftPressedMouseMove: false,
         },
         leftPriceScale: {
-            visible: false,
+            visible: true,
+            width: LEFT_PRICE_SCALE_WIDTH,
+            borderColor: 'transparent',
+            autoScale: true,
         },
         timeScale: {
             borderColor: '#30363d',
@@ -1321,6 +1347,7 @@ async function updateChart(symbol) {
         slot.secondaryCharts.forEach(sc => {
             sc.chart.timeScale().applyOptions({ rightOffset: rightOffsetBars });
         });
+
         const syncRange = mainChart.timeScale().getVisibleLogicalRange();
         if (syncRange) {
             slot.secondaryCharts.forEach(sc => {
@@ -1966,6 +1993,7 @@ function renderIndicatorData(data) {
                 chartObj.applyOptions({
                     leftPriceScale: {
                         visible: true,
+                        width: LEFT_PRICE_SCALE_WIDTH,
                         borderColor: '#30363d',
                         autoScale: true,
                         scaleMargins: { top: 0.8, bottom: 0 },
@@ -2006,8 +2034,31 @@ function renderIndicatorData(data) {
 
     // 6. Re-align drawing canvas and resize subplots to respect H Sub setting
     setTimeout(() => {
-        resizeAllCharts();
-        resizeDrawingCanvas();
+        // Block syncChartsListener from interfering during resize + re-sync
+        isSyncing = true;
+        try {
+            resizeAllCharts();
+            resizeDrawingCanvas();
+
+            // Re-apply timeScale options and sync range AFTER resize to ensure alignment
+            const mainRightOffset = mainChart.timeScale().options().rightOffset;
+            const mainBarSpacing = mainChart.timeScale().options().barSpacing;
+            slotSecCharts.forEach(sc => {
+                sc.chart.timeScale().applyOptions({
+                    barSpacing: mainBarSpacing,
+                    rightOffset: mainRightOffset,
+                });
+            });
+            const postResizeRange = mainChart.timeScale().getVisibleLogicalRange();
+            if (postResizeRange) {
+                slotSecCharts.forEach(sc => {
+                    sc.chart.timeScale().setVisibleLogicalRange(postResizeRange);
+                });
+            }
+        } finally {
+            // Use rAF to ensure the sync frame completes before re-enabling listener
+            requestAnimationFrame(() => { isSyncing = false; });
+        }
     }, 150);
 }
 
@@ -2035,6 +2086,7 @@ function getOrCreatePane(index, type) {
 
         const legend = document.createElement('div');
         legend.className = 'chart-legend';
+        legend.style.cssText = 'position:absolute; left:12px; top:2px; z-index:20; font-size:12px; font-family:monospace; color:#d1d4dc; background:rgba(22,27,34,0.7); padding:8px; border-radius:4px; pointer-events:none; line-height:1.5;';
         container.appendChild(legend);
 
         newChart.timeScale().subscribeVisibleLogicalRangeChange(() => {
@@ -2353,6 +2405,13 @@ function setupDrawingToolbar() {
             if (activeDrawing) saveDrawing(activeDrawing);
         });
     }
+    const styleSelect = document.getElementById('drawing-style-select');
+    if (styleSelect) {
+        styleSelect.addEventListener('change', () => {
+            redrawAllDrawings();
+            if (activeDrawing) saveDrawing(activeDrawing);
+        });
+    }
     const clearBtn = document.getElementById('clear-drawings-btn');
     if (clearBtn) {
         clearBtn.addEventListener('click', () => {
@@ -2369,6 +2428,7 @@ function setupDrawingToolbar() {
 
 function getDrawColor() { return document.getElementById('drawing-color-picker')?.value || '#58a6ff'; }
 function getDrawWidth() { return parseFloat(document.getElementById('drawing-width-slider')?.value || '1.5'); }
+function getDrawStyle() { return document.getElementById('drawing-style-select')?.value || 'solid'; }
 
 function setDrawingTool(tool) {
     console.log("[script.js] setDrawingTool called with:", tool, "current was:", currentDrawingTool);
@@ -2462,18 +2522,18 @@ function buildDrawingHandlers() {
         if (currentDrawingTool === 'text_label') {
             const text = prompt('Testo da inserire sul grafico:');
             if (!text) return;
-            const newDrawing = { type: 'text_label', ticker: activeTicker, points: [{ time, price }], text, color: getDrawColor(), lineWidth: getDrawWidth() };
+            const newDrawing = { type: 'text_label', ticker: activeTicker, points: [{ time, price }], text, color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
             drawings.push(newDrawing);
             saveDrawing(newDrawing); redrawAllDrawings(); return;
         }
         if (currentDrawingTool === 'price_label') {
-            const newDrawing = { type: 'price_label', ticker: activeTicker, points: [{ time, price }], color: getDrawColor(), lineWidth: getDrawWidth() };
+            const newDrawing = { type: 'price_label', ticker: activeTicker, points: [{ time, price }], color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
             drawings.push(newDrawing);
             saveDrawing(newDrawing); redrawAllDrawings(); return;
         }
         if (currentDrawingTool === 'callout') {
             if (!activeDrawing) {
-                activeDrawing = { type: 'callout', ticker: activeTicker, points: [{ time, price }], color: getDrawColor(), lineWidth: getDrawWidth() };
+                activeDrawing = { type: 'callout', ticker: activeTicker, points: [{ time, price }], color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
                 redrawAllDrawings(); return;
             } else {
                 const text = prompt('Testo del callout:');
@@ -2487,11 +2547,11 @@ function buildDrawingHandlers() {
             }
         }
         if (currentDrawingTool === 'polyline') {
-            if (!activeDrawing) activeDrawing = { type: 'polyline', ticker: activeTicker, points: [], color: getDrawColor(), lineWidth: getDrawWidth() };
+            if (!activeDrawing) activeDrawing = { type: 'polyline', ticker: activeTicker, points: [], color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
             activeDrawing.points.push({ time, price });
             redrawAllDrawings(); return;
         }
-        if (!activeDrawing) activeDrawing = { type: currentDrawingTool, ticker: activeTicker, points: [], color: getDrawColor(), lineWidth: getDrawWidth() };
+        if (!activeDrawing) activeDrawing = { type: currentDrawingTool, ticker: activeTicker, points: [], color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
         activeDrawing.points.push({ time, price });
         if (activeDrawing.points.length >= (needed[currentDrawingTool] || 2)) {
             const newDrawing = { ...activeDrawing, points: [...activeDrawing.points] };
@@ -2536,7 +2596,7 @@ function buildDrawingHandlers() {
         }
         if (currentDrawingTool === 'brush') {
             if (time != null && price != null) {
-                activeDrawing = { type: 'brush', ticker: activeTicker, points: [{ time, price }], color: getDrawColor(), lineWidth: getDrawWidth() };
+                activeDrawing = { type: 'brush', ticker: activeTicker, points: [{ time, price }], color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
             }
         }
     }
@@ -2680,7 +2740,8 @@ function redrawAllDrawings() {
     if (activeDrawing && activeDrawing.points.length > 0) {
         const preview = {
             type: activeDrawing.type, ticker: activeDrawing.ticker,
-            points: [...activeDrawing.points, { time: xToTime(lastMousePos.x), price: yToPrice(lastMousePos.y) }]
+            points: [...activeDrawing.points, { time: xToTime(lastMousePos.x), price: yToPrice(lastMousePos.y) }],
+            lineStyle: activeDrawing.lineStyle
         };
         drawingCtx.globalAlpha = 0.55;
         renderDrawing(drawingCtx, preview, true);
@@ -2712,9 +2773,11 @@ function renderDrawing(ctx, d, isPreview) {
     }
 }
 
-function applyStroke(ctx, color, width, dashed) {
+function applyStroke(ctx, color, width, lineStyle) {
     ctx.strokeStyle = color; ctx.lineWidth = width;
-    ctx.setLineDash(dashed ? [6, 4] : []);
+    if (lineStyle === 'dashed') ctx.setLineDash([8, 5]);
+    else if (lineStyle === 'dotted') ctx.setLineDash([3, 4]);
+    else ctx.setLineDash([]);
 }
 function dot(ctx, x, y, color) {
     ctx.fillStyle = color; ctx.beginPath(); ctx.arc(x, y, 3, 0, Math.PI * 2); ctx.fill();
@@ -2725,7 +2788,7 @@ function drawHorizontalLine(ctx, d, isPreview) {
     if (!d.points[0]) return;
     const y = priceToY(d.points[0].price); if (y == null) return;
     const col = d.color || '#58a6ff', w = d.lineWidth || 1.5;
-    applyStroke(ctx, col, w, false);
+    applyStroke(ctx, col, w, d.lineStyle || 'solid');
     ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(drawingCanvas.width, y); ctx.stroke();
     if (!isPreview) {
         ctx.fillStyle = col; ctx.font = '11px monospace';
@@ -2738,7 +2801,7 @@ function drawVerticalLine(ctx, d, isPreview) {
     if (!d.points[0]) return;
     const x = timeToX(d.points[0].time); if (x == null) return;
     const col = d.color || '#58a6ff', w = d.lineWidth || 1.5;
-    applyStroke(ctx, col, w, false);
+    applyStroke(ctx, col, w, d.lineStyle || 'solid');
     ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, drawingCanvas.height); ctx.stroke();
     if (!isPreview) {
         const lbl = (typeof d.points[0].time === 'string') ? d.points[0].time : timeToStr(d.points[0].time);
@@ -2756,7 +2819,7 @@ function drawTrendLine(ctx, d, isPreview) {
     if (!pts[1]) return;
     const x2 = timeToX(pts[1].time), y2 = priceToY(pts[1].price);
     if (x2 == null || y2 == null) return;
-    applyStroke(ctx, col, w, false);
+    applyStroke(ctx, col, w, d.lineStyle || 'solid');
     ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
     dot(ctx, x2, y2, col);
 }
@@ -2772,7 +2835,7 @@ function drawExtendedLine(ctx, d, isPreview) {
     const x2 = timeToX(pts[1].time), y2 = priceToY(pts[1].price);
     if (x2 == null || y2 == null) return;
     const W = drawingCanvas.width;
-    applyStroke(ctx, col, w, false);
+    applyStroke(ctx, col, w, d.lineStyle || 'solid');
     ctx.beginPath();
     if (Math.abs(x2 - x1) > 0.1) {
         const m = (y2 - y1) / (x2 - x1);
@@ -2793,7 +2856,7 @@ function drawRay(ctx, d, isPreview) {
     const x2 = timeToX(pts[1].time), y2 = priceToY(pts[1].price);
     if (x2 == null || y2 == null) return;
     const W = drawingCanvas.width;
-    applyStroke(ctx, col, w, false);
+    applyStroke(ctx, col, w, d.lineStyle || 'solid');
     ctx.beginPath(); ctx.moveTo(x1, y1);
     if (x2 !== x1) { const m = (y2 - y1) / (x2 - x1); ctx.lineTo(W, y1 + m * (W - x1)); } else ctx.lineTo(x1, 0);
     ctx.stroke(); dot(ctx, x2, y2, col);
@@ -2809,7 +2872,7 @@ function drawArrow(ctx, d, isPreview) {
     if (!pts[1]) return;
     const x2 = timeToX(pts[1].time), y2 = priceToY(pts[1].price);
     if (x2 == null || y2 == null) return;
-    applyStroke(ctx, col, w, false);
+    applyStroke(ctx, col, w, d.lineStyle || 'solid');
     ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
     const ang = Math.atan2(y2 - y1, x2 - x1), hLen = 14 + w * 2;
     ctx.fillStyle = col; ctx.beginPath();
@@ -2837,12 +2900,12 @@ function drawRectangle(ctx, d, isPreview) {
     ctx.fillRect(rx, ry, rw, rh);
 
     // Border
-    applyStroke(ctx, col, w, false);
+    applyStroke(ctx, col, w, d.lineStyle || 'solid');
     ctx.strokeRect(rx, ry, rw, rh);
 
     // Median Line (Horizontal)
     const midY = ry + rh / 2;
-    applyStroke(ctx, col, w * 0.8, true); // Slightly thinner, dashed
+    applyStroke(ctx, col, w * 0.8, 'dashed');
     ctx.beginPath();
     ctx.moveTo(rx, midY);
     ctx.lineTo(rx + rw, midY);
@@ -2891,7 +2954,7 @@ function drawCircle(ctx, d, isPreview) {
     if (ex == null || ey == null) return;
     const r = Math.hypot(ex - cx, ey - cy);
     ctx.fillStyle = col + '18'; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
-    applyStroke(ctx, col, w, false); ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+    applyStroke(ctx, col, w, d.lineStyle || 'solid'); ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
     dot(ctx, cx, cy, col);
 }
 
@@ -2908,7 +2971,7 @@ function drawPriceChannel(ctx, d, isPreview) {
     const W = drawingCanvas.width;
     const m = (x2 !== x1) ? (y2 - y1) / (x2 - x1) : Infinity;
     const lineY = (x, base) => m === Infinity ? y1 : base + m * (x - x1);
-    applyStroke(ctx, col, w, false);
+    applyStroke(ctx, col, w, d.lineStyle || 'solid');
     ctx.beginPath(); ctx.moveTo(0, lineY(0, y1)); ctx.lineTo(W, lineY(W, y1)); ctx.stroke();
     dot(ctx, x2, y2, col);
     const p3 = pts[2] || { time: xToTime(lastMousePos.x), price: yToPrice(lastMousePos.y) };
@@ -2916,7 +2979,7 @@ function drawPriceChannel(ctx, d, isPreview) {
     const y3 = priceToY(p3.price); if (y3 == null) return;
     const refX = pts[2] ? timeToX(pts[2].time) : lastMousePos.x;
     const offset = y3 - lineY(refX ?? x2, y1);
-    applyStroke(ctx, col, w, true);
+    applyStroke(ctx, col, w, 'dashed');
     ctx.beginPath(); ctx.moveTo(0, lineY(0, y1) + offset); ctx.lineTo(W, lineY(W, y1) + offset); ctx.stroke();
     ctx.setLineDash([]); ctx.fillStyle = col + '15';
     ctx.beginPath();
@@ -2954,7 +3017,7 @@ function drawTriangle(ctx, d, isPreview) {
 
     const p3 = pts[2] || (isPreview && pts[1] ? { time: xToTime(lastMousePos.x), price: yToPrice(lastMousePos.y) } : null);
     if (!p3) {
-        applyStroke(ctx, col, w, true);
+        applyStroke(ctx, col, w, 'dashed');
         ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
         return;
     }
@@ -2963,7 +3026,7 @@ function drawTriangle(ctx, d, isPreview) {
 
     ctx.fillStyle = col + '18';
     ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.lineTo(x3, y3); ctx.closePath(); ctx.fill();
-    applyStroke(ctx, col, w, false);
+    applyStroke(ctx, col, w, d.lineStyle || 'solid');
     ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.lineTo(x3, y3); ctx.closePath(); ctx.stroke();
     dot(ctx, x3, y3, col);
 }
@@ -2982,7 +3045,7 @@ function drawCallout(ctx, d, isPreview) {
     if (x2 == null || y2 == null) return;
 
     // Line from point to box
-    applyStroke(ctx, col, w, false);
+    applyStroke(ctx, col, w, d.lineStyle || 'solid');
     ctx.beginPath(); ctx.moveTo(x1, y1); ctx.lineTo(x2, y2); ctx.stroke();
 
     if (d.text) {
@@ -3033,7 +3096,7 @@ function drawPriceLabel(ctx, d, isPreview) {
 function drawPolyline(ctx, d, isPreview) {
     const pts = d.points; if (pts.length < 1) return;
     const col = d.color || '#58a6ff', w = d.lineWidth || 1.5;
-    applyStroke(ctx, col, w, false);
+    applyStroke(ctx, col, w, d.lineStyle || 'solid');
     ctx.beginPath();
     let first = true;
     for (const p of pts) {
@@ -3055,7 +3118,7 @@ function drawPolyline(ctx, d, isPreview) {
 function drawBrush(ctx, d, isPreview) {
     const pts = d.points; if (pts.length < 2) return;
     const col = d.color || '#58a6ff', w = d.lineWidth || 1.5;
-    applyStroke(ctx, col, w, false);
+    applyStroke(ctx, col, w, d.lineStyle || 'solid');
     ctx.beginPath();
     let first = true;
     for (const p of pts) {
@@ -3083,7 +3146,7 @@ function drawFibRetracement(ctx, d, isPreview) {
     const maxX = Math.max(x1 ?? 0, x2 ?? drawingCanvas.width);
     levels.forEach((lvl, i) => {
         const price = p1 + (p2 - p1) * lvl, y = priceToY(price); if (y == null) return;
-        applyStroke(ctx, cols[i], 1.2, true);
+        applyStroke(ctx, cols[i], 1.2, 'dashed');
         ctx.beginPath(); ctx.moveTo(minX, y); ctx.lineTo(maxX, y); ctx.stroke();
         if (i < levels.length - 1) {
             const ny = priceToY(p1 + (p2 - p1) * levels[i + 1]);
@@ -3117,7 +3180,7 @@ function drawFibExtension(ctx, d, isPreview) {
     const W = drawingCanvas.width;
     levels.forEach((lvl, i) => {
         const price = pC + swing * lvl, y = priceToY(price); if (y == null) return;
-        applyStroke(ctx, cols[i], 1.2, true);
+        applyStroke(ctx, cols[i], 1.2, 'dashed');
         ctx.beginPath(); ctx.moveTo(xC ?? 0, y); ctx.lineTo(W, y); ctx.stroke();
         if (!isPreview) { ctx.setLineDash([]); ctx.fillStyle = cols[i]; ctx.font = 'bold 10px monospace'; ctx.fillText(`${labels[i]}  ${price.toFixed(2)}`, W - 95, y - 3); }
     });
@@ -3256,6 +3319,26 @@ function showDrawingContextMenu(ex, ey, target) {
     wSlider.addEventListener('input', () => { target.lineWidth = parseFloat(wSlider.value); wLbl.textContent = wSlider.value + 'px'; redrawAllDrawings(); });
     wSlider.addEventListener('change', () => { saveDrawing(target); });
     wRow.appendChild(wSlider); wRow.appendChild(wLbl); menu.appendChild(wRow);
+
+    // Line style row
+    const sRow = document.createElement('div');
+    sRow.className = 'drawing-context-menu-item'; sRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    const sSelect = document.createElement('select');
+    sSelect.style.cssText = 'background:var(--card-bg);color:var(--text-color);border:1px solid var(--border-color);border-radius:4px;padding:2px 4px;font-size:11px;cursor:pointer;';
+    const styles = [
+        { value: 'solid', label: '─ Solido' },
+        { value: 'dashed', label: '╌ Tratteggiato' },
+        { value: 'dotted', label: '┈ Punteggiato' }
+    ];
+    styles.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s.value; opt.textContent = s.label;
+        if (s.value === (target.lineStyle || 'solid')) opt.selected = true;
+        sSelect.appendChild(opt);
+    });
+    sSelect.addEventListener('change', () => { target.lineStyle = sSelect.value; redrawAllDrawings(); saveDrawing(target); });
+    const sLbl = document.createElement('span'); sLbl.textContent = 'Stile';
+    sRow.appendChild(sSelect); sRow.appendChild(sLbl); menu.appendChild(sRow);
 
     // Regression StdDev row
     if (target.type === 'regression_channel') {
@@ -3425,6 +3508,7 @@ async function saveDrawing(drawing) {
         points: drawing.points,
         color: drawing.color,
         line_width: drawing.lineWidth || 1.5,
+        line_style: drawing.lineStyle || 'solid',
         text: drawing.text
     };
 
@@ -3468,6 +3552,7 @@ async function loadDrawings(ticker) {
                 points: d.points, // Already parsed by backend schema
                 color: d.color,
                 lineWidth: d.line_width,
+                lineStyle: d.line_style || 'solid',
                 text: d.text,
                 alarms: d.alarms || []
             };
@@ -3506,6 +3591,7 @@ async function migrateDrawingsToBackend() {
                         points: d.points,
                         color: d.color,
                         line_width: d.lineWidth || 1.5,
+                        line_style: d.lineStyle || 'solid',
                         text: d.text
                     }));
                     await apiCall(`/tickers/${symbol}/drawings/sync`, 'POST', payload);

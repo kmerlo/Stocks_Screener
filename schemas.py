@@ -173,6 +173,7 @@ class DrawingOut(BaseModel):
     points: List[DrawingPoint]
     color: str
     line_width: float
+    line_style: str = 'solid'
     text: Optional[str] = None
 
     @field_validator('points', mode='before')
@@ -196,6 +197,7 @@ class DrawingBase(BaseModel):
     points: List[DrawingPoint]
     color: str
     line_width: float
+    line_style: str = 'solid'
     text: Optional[str] = None
 
 class DrawingCreate(DrawingBase):

@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Financial Screener & Monitor</title>
-    <link rel="stylesheet" href="style.css?v=4">
+    <link rel="stylesheet" href="style.css?v=5">
     <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css">
@@ -178,6 +178,7 @@
                     <div id="toolbar-ticker-info" class="toolbar-section">
                         <span id="chart-title-main" style="font-weight: bold; color: var(--accent-color); margin-right: 5px;">Select a ticker</span>
                         <span id="chart-title-variation" style="font-family: monospace; font-size: 0.9em;"></span>
+                        <span id="chart-title-daily-variation" style="font-family: monospace; font-size: 0.9em; margin-left: 10px;"></span>
                     </div>
                     <div class="drawing-toolbar-sep"></div>
 
@@ -254,6 +255,12 @@
                         <input type="range" id="drawing-width-slider" min="1" max="6" step="0.5" value="1.5"
                             title="Spessore linea" style="width:70px;accent-color:var(--accent-color);">
                         <span id="drawing-width-label" style="font-size:11px;min-width:25px;">1.5px</span>
+                        <select id="drawing-style-select" title="Stile linea"
+                            style="background:var(--card-bg);color:var(--text-color);border:1px solid var(--border-color);border-radius:4px;padding:3px 4px;font-size:11px;cursor:pointer;">
+                            <option value="solid">─ Solido</option>
+                            <option value="dashed">╌ Tratteggiato</option>
+                            <option value="dotted">┈ Punteggiato</option>
+                        </select>
                     </div>
 
                     <div class="drawing-toolbar-sep"></div>
