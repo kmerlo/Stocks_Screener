@@ -8118,6 +8118,35 @@ if (document.getElementById('trans-type')) {
     };
 }
 
+if (document.getElementById('fetch-price-btn')) {
+    document.getElementById('fetch-price-btn').onclick = async () => {
+        const ticker = document.getElementById('trans-ticker').value.toUpperCase();
+        const dateVal = transDatePickr ? transDatePickr.selectedDates[0] : document.getElementById('trans-date').value;
+        if (!ticker) return alert("Inserisci il ticker prima.");
+        if (!dateVal) return alert("Seleziona una data prima.");
+        let dateStr;
+        if (dateVal instanceof Date) {
+            const y = dateVal.getFullYear();
+            const m = String(dateVal.getMonth() + 1).padStart(2, '0');
+            const d = String(dateVal.getDate()).padStart(2, '0');
+            dateStr = `${y}-${m}-${d}`;
+        } else {
+            dateStr = dateVal.split('T')[0];
+        }
+        try {
+            const response = await fetch(`/ticker_price?symbol=${encodeURIComponent(ticker)}&date=${dateStr}`);
+            const data = await response.json();
+            if (data.price !== null && data.price !== undefined) {
+                document.getElementById('trans-price').value = data.price.toFixed(4);
+            } else {
+                alert("Nessun prezzo trovato nel DB per " + ticker + " in data " + dateStr);
+            }
+        } catch (err) {
+            alert("Errore nel recupero del prezzo: " + err.message);
+        }
+    };
+}
+
 if (document.getElementById('save-cash-btn')) {
     document.getElementById('save-cash-btn').onclick = async () => {
         if (!activePortfolioId) return;

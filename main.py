@@ -1137,6 +1137,32 @@ def get_fx_rate(base_currency: str, instrument_currency: str, date: str):
     rate = finance_logic.get_historical_fx_rate(instrument_currency, base_currency, date)
     return {"rate": rate}
 
+@app.get("/ticker_price")
+def get_ticker_price(symbol: str, date: str, db: Session = Depends(get_db)):
+    """Restituisce il prezzo di chiusura più vicino alla data richiesta dal DB price_data."""
+    import datetime
+    try:
+        date_str = date.split('.')[0] if '.' in date else date
+        if 'T' in date_str:
+            parts = date_str.split('T')
+            time_part = parts[1]
+            if len(time_part.split(':')) == 2:
+                date_str += ':00'
+            dt = datetime.datetime.strptime(date_str, "%Y-%m-%dT%H:%M:%S")
+        else:
+            dt = datetime.datetime.strptime(date_str, "%Y-%m-%d")
+    except Exception:
+        return {"price": None}
+
+    rec = db.query(db_mod.PriceData).filter(
+        db_mod.PriceData.symbol == symbol,
+        db_mod.PriceData.date <= dt
+    ).order_by(db_mod.PriceData.date.desc()).first()
+
+    if rec:
+        return {"price": rec.close}
+    return {"price": None}
+
 # Serve Frontend
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.exists(static_dir):
