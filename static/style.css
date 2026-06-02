@@ -538,11 +538,13 @@ th {
 }
 
 .secondary-pane {
+    width: 100%;
     border: 1px solid var(--border-color);
     border-radius: 8px;
     background-color: var(--card-bg);
     margin-top: 10px;
     position: relative;
+    overflow: hidden;
     /* For legend positioning */
 }
 

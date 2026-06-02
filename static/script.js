@@ -33,6 +33,7 @@ const NUM_CHART_SLOTS = 4;
 let chartSlots = [];
 let activeChartIndex = 0;
 let activeChartCount = 1;
+let initialWrapperHeight = 0;
 
 function initChartSlots() {
     chartSlots = [];
@@ -639,6 +640,7 @@ async function applyTemplate(id) {
         loadedTemplateId = template.id;
         loadedTemplateName = template.name;
 
+        chartSlots[activeChartIndex].activeIndicators = activeIndicators;
         renderActiveIndicatorsUI();
         if (activeTicker) updateChart(activeTicker);
     } catch (err) {
@@ -649,6 +651,7 @@ async function applyTemplate(id) {
 function resetChart() {
     clearAllIndicators();
     activeIndicators = [];
+    chartSlots[activeChartIndex].activeIndicators = activeIndicators;
     loadedTemplateId = null;
     loadedTemplateName = null;
 
@@ -789,6 +792,10 @@ function initChart() {
     }
 
     // Force layout and resize charts before loading any data
+    const wrapperEl = document.getElementById('chart-and-fundamentals-wrapper');
+    if (wrapperEl && initialWrapperHeight === 0) {
+        initialWrapperHeight = wrapperEl.clientHeight;
+    }
     resizeAllCharts();
     loadTemplates();
 
@@ -1309,6 +1316,18 @@ async function updateChart(symbol) {
                 to: lastIndex + rightOffsetBars
             });
         }
+
+        // Sync rightOffset and visible range to secondary charts for alignment
+        slot.secondaryCharts.forEach(sc => {
+            sc.chart.timeScale().applyOptions({ rightOffset: rightOffsetBars });
+        });
+        const syncRange = mainChart.timeScale().getVisibleLogicalRange();
+        if (syncRange) {
+            slot.secondaryCharts.forEach(sc => {
+                sc.chart.timeScale().setVisibleLogicalRange(syncRange);
+            });
+        }
+
         saveActiveSlotState();
     } catch (err) {
         console.error(`Error updating chart for ${symbol}:`, err);
@@ -1683,7 +1702,7 @@ async function confirmIndicatorModal() {
     } else {
         // New indicator
         const isOverlay = ['sma', 'ema', 'hma', 'supertrend', 'donchian', 'bbands', 'volume'].includes(type);
-        const paneIndex = isOverlay ? 0 : (secondaryCharts.length + 1);
+        const paneIndex = isOverlay ? 0 : (chartSlots[activeChartIndex].secondaryCharts.length + 1);
         activeIndicators.push({
             id: `${type}_${Date.now()}`,
             type, params, paneIndex,
@@ -1714,7 +1733,7 @@ function removeIndicator(id) {
     if (ind.seriesList && ind.seriesList.length > 0) {
         const chartObj = ind.paneIndex === 0
             ? mainChart
-            : secondaryCharts.find(sc => sc.paneIndex === ind.paneIndex)?.chart;
+            : chartSlots[activeChartIndex].secondaryCharts.find(sc => sc.paneIndex === ind.paneIndex)?.chart;
         if (chartObj) {
             ind.seriesList.forEach(s => {
                 try { chartObj.removeSeries(s); } catch (e) { }
@@ -1792,6 +1811,9 @@ async function applyIndicators(symbol) {
 
 function renderIndicatorData(data) {
     console.log("Rendering indicator data...");
+    const slot = chartSlots[activeChartIndex];
+    if (!slot) return;
+    const slotSecCharts = slot.secondaryCharts;
 
     // 1. Ensure all required secondary charts (panes) exist first
     activeIndicators.forEach(ind => {
@@ -1801,7 +1823,7 @@ function renderIndicatorData(data) {
     });
 
     // 2. Correctly remove OLD series from ALL charts (Main and Secondary)
-    secondaryCharts.forEach(sc => {
+    slotSecCharts.forEach(sc => {
         if (sc.series) {
             sc.series.forEach(s => { try { sc.chart.removeSeries(s); } catch (e) { } });
         }
@@ -1817,7 +1839,7 @@ function renderIndicatorData(data) {
     // Pre-clear all seriesList from activeIndicators to be sure no orphans remain
     activeIndicators.forEach(ind => {
         if (ind.seriesList && ind.seriesList.length > 0) {
-            const chartObj = ind.paneIndex === 0 ? mainChart : secondaryCharts.find(sc => sc.paneIndex === ind.paneIndex)?.chart;
+            const chartObj = ind.paneIndex === 0 ? mainChart : slotSecCharts.find(sc => sc.paneIndex === ind.paneIndex)?.chart;
             if (chartObj) {
                 ind.seriesList.forEach(s => { try { chartObj.removeSeries(s); } catch (e) { } });
             }
@@ -1833,7 +1855,7 @@ function renderIndicatorData(data) {
 
     // 3. Add hidden "ghost" series to force the time axis to match the main chart
     // We do this for BOTH mainChart and all secondaryCharts to ensure extent alignment.
-    [mainChart, ...secondaryCharts.map(sc => sc.chart)].forEach(chartObj => {
+    [mainChart, ...slotSecCharts.map(sc => sc.chart)].forEach(chartObj => {
         const ghost = chartObj.addLineSeries({
             visible: false,
             priceScaleId: 'none',
@@ -1842,7 +1864,7 @@ function renderIndicatorData(data) {
         });
         ghost.setData(dates.map(d => ({ time: d, value: 0 })));
 
-        const sc = secondaryCharts.find(c => c.chart === chartObj);
+        const sc = slotSecCharts.find(c => c.chart === chartObj);
         if (sc) sc.series.push(ghost);
         else {
             if (!mainChart._ghosts) mainChart._ghosts = [];
@@ -1967,7 +1989,7 @@ function renderIndicatorData(data) {
                 ind.seriesList.push(newSeries);
 
                 if (ind.paneIndex > 0) {
-                    const sc = secondaryCharts.find(c => c.paneIndex === ind.paneIndex);
+                    const sc = slotSecCharts.find(c => c.paneIndex === ind.paneIndex);
                     if (sc && !sc.series.includes(newSeries)) sc.series.push(newSeries);
                 }
             } catch (e) {
@@ -1979,24 +2001,31 @@ function renderIndicatorData(data) {
     // 5. Final sync trigger
     const range = mainChart.timeScale().getVisibleLogicalRange();
     if (range) {
-        secondaryCharts.forEach(sc => sc.chart.timeScale().setVisibleLogicalRange(range));
+        slotSecCharts.forEach(sc => sc.chart.timeScale().setVisibleLogicalRange(range));
     }
 
-    // 6. Re-align drawing canvas: LWC re-lays out asynchronously after adding series,
-    //    so we defer the resize so the plot canvas has settled before we re-position.
-    setTimeout(() => resizeDrawingCanvas(), 150);
+    // 6. Re-align drawing canvas and resize subplots to respect H Sub setting
+    setTimeout(() => {
+        resizeAllCharts();
+        resizeDrawingCanvas();
+    }, 150);
 }
 
 function getOrCreatePane(index, type) {
     const slot = chartSlots[activeChartIndex];
     let sc = slot.secondaryCharts.find(c => c.paneIndex === index);
     if (!sc) {
+        const paneId = `pane-${slot.index}-${index}`;
+        const existingEl = document.getElementById(paneId);
+        if (existingEl) existingEl.remove();
+
         const container = document.createElement('div');
         container.classList.add('secondary-pane');
 
-        const height = 60;
+        const subInput = document.getElementById('sub-height-input');
+        const height = subInput ? (parseInt(subInput.value, 10) || 60) : 60;
         container.style.height = `${height}px`;
-        container.id = `pane-${slot.index}-${index}`;
+        container.id = paneId;
 
         const subplotsContainer = document.querySelector(`.chart-slot-subplots[data-slot="${slot.index}"]`);
         if (subplotsContainer) subplotsContainer.appendChild(container);
@@ -2039,6 +2068,7 @@ function clearAllIndicators() {
         try { sc.container.remove(); } catch (e) { }
     });
     slot.secondaryCharts = [];
+    secondaryCharts = slot.secondaryCharts;
     updatePanesVisibility();
 
     setTimeout(() => resizeDrawingCanvas(), 150);
@@ -4991,7 +5021,31 @@ function renderBaseScreeningTable(sheet) {
 function resizeAllCharts() {
     const wrapper = document.getElementById('chart-and-fundamentals-wrapper');
     if (!wrapper) return;
-    const wrapperWidth = wrapper.clientWidth;
+
+    const mainInput = document.getElementById('main-height-input');
+    const subInput = document.getElementById('sub-height-input');
+    const userMainHeight = mainInput ? parseInt(mainInput.value, 10) : 0;
+    const userSubHeight = subInput ? parseInt(subInput.value, 10) : 60;
+    const gap = 8;
+
+    if (userMainHeight > 0) {
+        const rowHeight = userMainHeight;
+
+        for (let i = 0; i < NUM_CHART_SLOTS; i++) {
+            const slot = chartSlots[i];
+            if (!slot || !slot.chart || !slot.container) continue;
+            slot.container.style.height = `${rowHeight}px`;
+            slot.chart.resize(slot.container.clientWidth, rowHeight);
+            slot.secondaryCharts.forEach(sc => {
+                sc.container.style.height = `${userSubHeight}px`;
+                sc.chart.resize(sc.container.clientWidth, userSubHeight);
+            });
+        }
+        resizeDrawingCanvas();
+        return;
+    }
+
+    const baseHeight = initialWrapperHeight > 0 ? initialWrapperHeight : wrapper.clientHeight;
 
     const section = document.getElementById('ticker-fundamentals-section');
     const content = document.getElementById('fundamentals-collapsible-content');
@@ -5000,28 +5054,24 @@ function resizeAllCharts() {
         fundaHeight = section.offsetHeight + 45;
     }
 
-    const availHeight = wrapper.clientHeight - fundaHeight - 5;
-    const gap = 8;
-    let colWidth, rowHeight;
+    const availHeight = baseHeight - fundaHeight - 5;
+    let rowHeight;
 
     if (activeChartCount === 4) {
         const cols = 2;
         rowHeight = Math.max(150, Math.floor((availHeight - gap) / cols));
-        colWidth = Math.floor((wrapperWidth - gap) / cols);
     } else {
         rowHeight = Math.max(150, Math.floor(availHeight));
-        colWidth = Math.floor((wrapperWidth - gap * (activeChartCount - 1)) / activeChartCount);
     }
 
     for (let i = 0; i < NUM_CHART_SLOTS; i++) {
         const slot = chartSlots[i];
         if (!slot || !slot.chart || !slot.container) continue;
         slot.container.style.height = `${rowHeight}px`;
-        slot.chart.resize(colWidth, rowHeight);
-        const sh = 60;
+        slot.chart.resize(slot.container.clientWidth, rowHeight);
         slot.secondaryCharts.forEach(sc => {
-            sc.container.style.height = `${sh}px`;
-            sc.chart.resize(colWidth, sh);
+            sc.container.style.height = `${userSubHeight}px`;
+            sc.chart.resize(sc.container.clientWidth, userSubHeight);
         });
     }
 
