@@ -1152,6 +1152,16 @@ canvas.drawing-layer.active {
     opacity: 1;
 }
 
+.tooltip-text-bottom {
+    bottom: auto;
+    top: 125%;
+}
+.tooltip-text-bottom::after {
+    top: auto;
+    bottom: 100%;
+    border-color: transparent transparent #30363d transparent;
+}
+
 /* Fundamentals */
 .fundamentals-grid {
     display: grid;

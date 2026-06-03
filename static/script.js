@@ -4189,8 +4189,11 @@ document.getElementById('upload-csv-btn').addEventListener('click', async () => 
     }
 
     if (!fileInput.files.length) {
-        alert("Per favore, seleziona un file CSV da caricare.");
-        return;
+        fileInput.click();
+        await new Promise(resolve => {
+            fileInput.addEventListener('change', resolve, { once: true });
+        });
+        if (!fileInput.files.length) return;
     }
 
     const btn = document.getElementById('upload-csv-btn');
@@ -7853,6 +7856,19 @@ function renderPortfolioSummary(data) {
     unEl.textContent = `${unPnl.toFixed(2)} ${curr}`;
     unEl.style.color = unPnl >= 0 ? 'var(--up-color)' : 'var(--down-color)';
 
+    const initialTotal = summary.total_current_value - summary.total_unrealized_pl;
+    const unPct = document.getElementById('portfolio-unrealized-pct');
+    if (unPct) {
+        if (initialTotal !== 0) {
+            const pct = (unPnl / initialTotal) * 100;
+            unPct.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+            unPct.style.color = pct >= 0 ? 'var(--up-color)' : 'var(--down-color)';
+        } else {
+            unPct.textContent = '—';
+            unPct.style.color = 'var(--text-secondary)';
+        }
+    }
+
     const rePnl = summary.total_realized_pl;
     const reEl = document.getElementById('portfolio-realized-display');
     reEl.textContent = `${rePnl.toFixed(2)} ${curr}`;
@@ -7893,6 +7909,8 @@ function renderPortfolioPositions() {
         valueValMin: v('pos-filter-value-val-min'), valueValMax: v('pos-filter-value-val-max'),
         pnlBaseMin: v('pos-filter-pnl-base-min'), pnlBaseMax: v('pos-filter-pnl-base-max'),
         pnlValMin: v('pos-filter-pnl-val-min'), pnlValMax: v('pos-filter-pnl-val-max'),
+        pctBaseMin: v('pos-filter-pct-base-min'), pctBaseMax: v('pos-filter-pct-base-max'),
+        pctValMin: v('pos-filter-pct-val-min'), pctValMax: v('pos-filter-pct-val-max'),
         weightMin: v('pos-filter-weight-min'), weightMax: v('pos-filter-weight-max')
     };
 
@@ -7925,6 +7943,12 @@ function renderPortfolioPositions() {
         if (!inMinMax(pos.current_value_instrument ?? 0, filters.valueValMin, filters.valueValMax)) return false;
         if (!inMinMax(pos.unrealized_pl, filters.pnlBaseMin, filters.pnlBaseMax)) return false;
         if (!inMinMax(pos.unrealized_pl_instrument ?? 0, filters.pnlValMin, filters.pnlValMax)) return false;
+        const initialBase = pos.current_value - pos.unrealized_pl;
+        const initialVal = (pos.current_value_instrument ?? 0) - (pos.unrealized_pl_instrument ?? 0);
+        const pctBase = initialBase !== 0 ? (pos.unrealized_pl / initialBase * 100) : 0;
+        const pctVal = initialVal !== 0 ? ((pos.unrealized_pl_instrument ?? 0) / initialVal * 100) : 0;
+        if (!inMinMax(pctBase, filters.pctBaseMin, filters.pctBaseMax)) return false;
+        if (!inMinMax(pctVal, filters.pctValMin, filters.pctValMax)) return false;
         const weight = activePortfolioTotalValue > 0 ? (pos.current_value / activePortfolioTotalValue * 100) : 0;
         if (!inMinMax(weight, filters.weightMin, filters.weightMax)) return false;
         return true;
@@ -7947,12 +7971,26 @@ function renderPortfolioPositions() {
                 const wb = activePortfolioTotalValue > 0 ? (b.current_value / activePortfolioTotalValue * 100) : 0;
                 return (wa - wb) * d;
             }
+            if (k === 'pct_base') {
+                const ia = a.current_value - a.unrealized_pl;
+                const ib = b.current_value - b.unrealized_pl;
+                const pa = ia !== 0 ? (a.unrealized_pl / ia * 100) : 0;
+                const pb = ib !== 0 ? (b.unrealized_pl / ib * 100) : 0;
+                return (pa - pb) * d;
+            }
+            if (k === 'pct_val') {
+                const ia = (a.current_value_instrument ?? 0) - (a.unrealized_pl_instrument ?? 0);
+                const ib = (b.current_value_instrument ?? 0) - (b.unrealized_pl_instrument ?? 0);
+                const pa = ia !== 0 ? ((a.unrealized_pl_instrument ?? 0) / ia * 100) : 0;
+                const pb = ib !== 0 ? ((b.unrealized_pl_instrument ?? 0) / ib * 100) : 0;
+                return (pa - pb) * d;
+            }
             va = a[k] ?? 0; vb = b[k] ?? 0;
             return (va - vb) * d;
         });
     }
 
-    const posHeaders = ['ticker','date','days','quantity','pmc','pmc_instrument','current_price','current_value','current_value_instrument','unrealized_pl','unrealized_pl_instrument','weight'];
+    const posHeaders = ['ticker','date','days','quantity','pmc','pmc_instrument','current_price','current_value','current_value_instrument','unrealized_pl','unrealized_pl_instrument','pct_base','pct_val','weight'];
 
     filtered.forEach(pos => {
         const tr = document.createElement('tr');
@@ -7967,6 +8005,12 @@ function renderPortfolioPositions() {
         
         const pnlInstrument = pos.unrealized_pl_instrument ?? 0.0;
         const pnlInstrumentColor = pnlInstrument >= 0 ? 'var(--up-color)' : 'var(--down-color)';
+        const initialBase = pos.current_value - pos.unrealized_pl;
+        const initialVal = (pos.current_value_instrument ?? 0) - (pos.unrealized_pl_instrument ?? 0);
+        const pctBase = initialBase !== 0 ? (pos.unrealized_pl / initialBase * 100) : 0;
+        const pctVal = initialVal !== 0 ? ((pos.unrealized_pl_instrument ?? 0) / initialVal * 100) : 0;
+        const pctBaseColor = pctBase >= 0 ? 'var(--up-color)' : 'var(--down-color)';
+        const pctValColor = pctVal >= 0 ? 'var(--up-color)' : 'var(--down-color)';
         const instrumentCurrency = pos.currency || curr;
         const pmcInstrument = pos.pmc_instrument ?? 0.0;
         
@@ -7986,6 +8030,8 @@ function renderPortfolioPositions() {
             <td>${isSignal ? '—' : (pos.current_value_instrument ?? 0).toFixed(2) + ' ' + instrumentCurrency}</td>
             <td style="color: ${pnlColor}; font-weight: bold;">${isSignal ? '—' : pnl.toFixed(2) + ' ' + curr}</td>
             <td style="color: ${pnlInstrumentColor}; font-weight: bold;">${isSignal ? '—' : pnlInstrument.toFixed(2) + ' ' + instrumentCurrency}</td>
+            <td style="color: ${pctBaseColor}; font-weight: bold;">${isSignal || initialBase === 0 ? '—' : pctBase.toFixed(2) + '%'}</td>
+            <td style="color: ${pctValColor}; font-weight: bold;">${isSignal || initialVal === 0 ? '—' : pctVal.toFixed(2) + '%'}</td>
             <td style="font-weight: bold;">${isSignal ? '—' : weight.toFixed(1) + '%'}</td>
             <td>
                 ${isSignal 
@@ -8306,6 +8352,26 @@ async function updateAutomaticExchangeRate() {
 window.updateAutomaticExchangeRate = updateAutomaticExchangeRate;
 window.openEditTransactionModal = openEditTransactionModal;
 
+if (document.getElementById('calc-cv-btn')) {
+    document.getElementById('calc-cv-btn').onclick = () => {
+        const qty = parseFloat(document.getElementById('trans-qty').value) || 0;
+        const price = parseFloat(document.getElementById('trans-price').value) || 0;
+        const cv = qty * price;
+        const input = document.getElementById('trans-cv');
+        if (input) input.value = cv.toFixed(2);
+    };
+}
+
+if (document.getElementById('calc-qty-btn')) {
+    document.getElementById('calc-qty-btn').onclick = () => {
+        const price = parseFloat(document.getElementById('trans-price').value) || 0;
+        const cv = parseFloat(document.getElementById('trans-cv').value) || 0;
+        if (price <= 0) return;
+        const qty = Math.floor(cv / price);
+        document.getElementById('trans-qty').value = qty;
+    };
+}
+
 if (document.getElementById('add-transaction-btn')) {
     document.getElementById('add-transaction-btn').onclick = () => {
         editingTransactionId = null;
@@ -8322,28 +8388,11 @@ if (document.getElementById('add-transaction-btn')) {
         else document.getElementById('trans-date').value = val;
         if (activeTicker) document.getElementById('trans-ticker').value = activeTicker;
         document.getElementById('trans-short-fee-row').style.display = 'none';
+        const cvInput = document.getElementById('trans-cv');
+        if (cvInput) cvInput.value = '';
         
         updateAutomaticExchangeRate();
     };
-}
-
-function openBuyModal(ticker) {
-    editingTransactionId = null;
-    const titleEl = document.getElementById('transaction-modal-title');
-    if (titleEl) titleEl.textContent = "Nuova Transazione";
-
-    const modal = document.getElementById('transaction-modal');
-    modal.classList.remove('hidden');
-    document.getElementById('trans-type').value = 'BUY';
-    const now = new Date();
-    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
-    const val = now.toISOString().slice(0, 16);
-    if (transDatePickr) transDatePickr.setDate(val, false);
-    else document.getElementById('trans-date').value = val;
-    document.getElementById('trans-ticker').value = ticker;
-    document.getElementById('trans-short-fee-row').style.display = 'none';
-    
-    updateAutomaticExchangeRate();
 }
 
 if (document.getElementById('close-position-top-btn')) {

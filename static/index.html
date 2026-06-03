@@ -379,62 +379,46 @@
 
         <!-- Lists Management View -->
         <div id="lists-view" class="view-container hidden">
-            <div class="card">
-                <h3>Create New List</h3>
-                <div style="display: flex; gap: 10px;">
-                    <input type="text" id="new-list-name" placeholder="List Name">
+            <div class="card" style="padding: 12px;">
+                <div style="display: flex; gap: 10px; align-items: center;">
+                    <input type="text" id="new-list-name" placeholder="List Name" style="flex: 1;">
                     <button id="create-list-btn">Create List</button>
+                    <span style="color: var(--text-color); font-weight: bold; margin-left: 20px;">Edit Selected List</span>
+                    <div style="display: flex; gap: 10px; flex: 1;">
+                        <input type="text" id="add-ticker-input" placeholder="e.g. AAPL" style="flex: 1;">
+                        <button id="add-ticker-btn">Add Ticker</button>
+                    </div>
+                    <div style="display: flex; gap: 5px;">
+                        <select id="index-import-select" style="width: auto;">
+                            <option value="">Index...</option>
+                        </select>
+                        <button id="import-index-btn" style="white-space: nowrap;">Import</button>
+                    </div>
+                    <div style="display: flex; gap: 5px; align-items: center;">
+                        <input type="file" id="csv-upload-input" accept=".csv" style="display: none;">
+                        <button id="upload-csv-btn" title="Import CSV (Semicolon separated)">
+                            Import CSV
+                            <span class="tooltip-container" style="margin-left: 3px;">
+                                <span class="help-icon" style="font-size: 0.8rem; width: 14px; height: 14px; line-height: 14px;">?</span>
+                                <span class="tooltip-text tooltip-text-bottom">
+                                    <strong>Formato richiesto:</strong><br>
+                                    - Separatore: <code>;</code><br>
+                                    - Colonna 1: Ticker Yahoo<br>
+                                    - Colonna 2: Nome (Opzionale)
+                                </span>
+                            </span>
+                        </button>
+                    </div>
+                    <button id="clear-list-btn" style="background-color: var(--danger-color); white-space: nowrap;">Clear</button>
+                </div>
+                <div style="display: flex; gap: 10px; margin-top: 8px;">
+                    <button id="export-csv-btn" class="secondary" style="font-size: 0.85rem;">Export List (CSV)</button>
+                    <button id="fetch-missing-names-btn" class="secondary" style="font-size: 0.85rem;">Cerca Nomi</button>
                 </div>
             </div>
 
-            <div class="card">
-                <h3>Edit Selected List</h3>
-                <div style="margin-bottom: 20px;">
-                    <p>Add Ticker:</p>
-                    <div style="display: flex; gap: 10px;">
-                        <input type="text" id="add-ticker-input" placeholder="e.g. AAPL">
-                        <button id="add-ticker-btn">Add Ticker</button>
-                    </div>
-                </div>
-
-                <div style="margin-bottom: 20px; border-top: 1px solid var(--border-color); padding-top: 15px;">
-                    <p>Import from Index (pytickersymbols):</p>
-                    <div style="display: flex; gap: 10px;">
-                        <select id="index-import-select">
-                            <option value="">Select index...</option>
-                        </select>
-                        <button id="import-index-btn">Import</button>
-                    </div>
-                </div>
-
-                <div style="margin-bottom: 20px; border-top: 1px solid var(--border-color); padding-top: 15px;">
-                    <p>Import CSV (Semicolon separated):
-                        <span class="tooltip-container">
-                            <span class="help-icon">?</span>
-                            <span class="tooltip-text">
-                                <strong>Formato richiesto:</strong><br>
-                                - Separatore: <code>;</code> (Punto e virgola)<br>
-                                - Colonna 1: <strong>Ticker Yahoo</strong> (es: AAPL o ENI.MI)<br>
-                                - Colonna 2: Nome (Opzionale)<br><br>
-                                <em>L'importazione è posizionale (Ticker poi Nome). L'intestazione è opzionale.</em>
-                            </span>
-                        </span>
-                    </p>
-                    <div style="display: flex; gap: 10px; align-items: center;">
-                        <input type="file" id="csv-upload-input" accept=".csv">
-                        <button id="upload-csv-btn">Upload CSV</button>
-                    </div>
-                </div>
-
-                <div
-                    style="margin-top: 20px; border-top: 1px solid var(--border-color); padding-top: 15px; display: flex; gap: 10px;">
-                    <button id="export-csv-btn" class="secondary">Export Current List (CSV)</button>
-                    <button id="fetch-missing-names-btn" class="secondary">Cerca Nomi Mancanti</button>
-                    <button id="clear-list-btn" style="background-color: var(--danger-color);">Clear All
-                        Tickers</button>
-                </div>
-
-                <div id="current-list-tickers" style="margin-top: 20px; max-height: 400px; overflow-y: auto; border: 1px solid var(--border-color); padding: 10px; border-radius: 4px;">
+            <div class="card" style="flex: 1; display: flex; flex-direction: column; min-height: 0; padding: 12px;">
+                <div id="current-list-tickers" style="flex: 1; overflow-y: auto; border: 1px solid var(--border-color); padding: 8px; border-radius: 4px; min-height: 200px;">
                     <!-- Tickers will be listed here -->
                 </div>
             </div>
@@ -903,6 +887,7 @@
                     <div class="stat-box" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; text-align: center;">
                         <div style="font-size: 0.9rem; color: var(--text-secondary);">P&L Aperto</div>
                         <div id="portfolio-unrealized-display" style="font-size: 1.5rem; font-weight: bold; margin-top: 5px;">0.00</div>
+                        <div id="portfolio-unrealized-pct" style="font-size: 1rem; margin-top: 2px;">—</div>
                     </div>
                     <div class="stat-box" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; text-align: center;">
                         <div style="font-size: 0.9rem; color: var(--text-secondary);">P&L Realizzato</div>
@@ -940,6 +925,8 @@
                                 <th onclick="togglePosSort('current_value_instrument')" class="sortable-th">Valore C. (Valuta) <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('unrealized_pl')" class="sortable-th">P&L (Base) <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('unrealized_pl_instrument')" class="sortable-th">P&L (Valuta) <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('pct_base')" class="sortable-th">% (Base) <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('pct_val')" class="sortable-th">% (Valuta) <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('weight')" class="sortable-th">% Portfolio <span class="sort-arrow"></span></th>
                                 <th>Azioni</th>
                             </tr>
@@ -955,6 +942,8 @@
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-value-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-value-val-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pnl-base-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pnl-base-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pnl-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pnl-val-max" class="portfolio-pos-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pct-base-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pct-base-max" class="portfolio-pos-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pct-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pct-val-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-weight-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-weight-max" class="portfolio-pos-filter"></div></th>
                                 <th></th>
                             </tr>
@@ -1229,6 +1218,12 @@
                     <label>Prezzo:</label>
                     <input type="number" step="0.0001" id="trans-price" style="flex:1;">
                     <button type="button" id="fetch-price-btn" title="Prendi prezzo dal DB per ticker e data selezionati" style="padding: 4px 10px; font-size: 1.1rem; cursor: pointer;">&#8595;</button>
+                </div>
+                <div class="modal-form-row">
+                    <label>Controvalore:</label>
+                    <input type="number" step="0.01" id="trans-cv" style="flex:1;" placeholder="0.00">
+                    <button type="button" id="calc-cv-btn" title="Calcola controvalore (quantità × prezzo)" style="padding: 4px 10px; font-size: 0.9rem; cursor: pointer;">Calcola CV</button>
+                    <button type="button" id="calc-qty-btn" title="Calcola quantità (controvalore / prezzo, arrotondata per difetto)" style="padding: 4px 10px; font-size: 0.9rem; cursor: pointer;">Calc Q.tà</button>
                 </div>
                 <div class="modal-form-row">
                     <label>Valuta Strumento:</label>
