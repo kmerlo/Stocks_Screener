@@ -196,6 +196,9 @@ header {
 #monitoring-view {
     overflow-y: auto;
 }
+#lists-view {
+    overflow-y: auto;
+}
 #portfolio-view {
     overflow-y: auto;
 }
