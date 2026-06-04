@@ -33,6 +33,7 @@ const NUM_CHART_SLOTS = 4;
 let chartSlots = [];
 let activeChartIndex = 0;
 let activeChartCount = 1;
+const transactionNotesMap = {}; // { ticker: { timeKey: [{ type, note, quantity, price, portfolioName }] } }
 let initialWrapperHeight = 0;
 
 function initChartSlots() {
@@ -736,9 +737,33 @@ function initChart() {
             if (!param || !param.time) return;
             const dateStr = timeToStr(param.time);
             const ticker = chartSlots[i].ticker;
-            if (ticker) {
-                await loadHistoricalFundamentals(ticker, dateStr);
+            if (!ticker) return;
+
+            // Compute timeframe-aware key to match marker grouping
+            const timeframe = document.getElementById('timeframe-select')?.value || 'D';
+            const date = new Date(dateStr + 'T00:00:00');
+            let groupKey = dateStr;
+            if (timeframe === 'W') {
+                const day = date.getDay();
+                const diff = date.getDate() - day + (day === 0 ? -6 : 1);
+                const monday = new Date(new Date(date).setDate(diff));
+                groupKey = monday.toISOString().split('T')[0];
+            } else if (timeframe === 'M') {
+                groupKey = new Date(date.getFullYear(), date.getMonth(), 1).toISOString().split('T')[0];
             }
+
+            // Check if there's a transaction note at this time
+            const notes = transactionNotesMap[ticker]?.[groupKey];
+            if (notes && notes.some(t => t.note)) {
+                const noteText = notes
+                    .filter(t => t.note)
+                    .map(t => `[${t.type}] ${t.quantity} @ ${t.price} (${t.portfolioName})\n${t.note}`)
+                    .join('\n\n---\n\n');
+                openNoteModal(ticker, noteText);
+                return;
+            }
+
+            await loadHistoricalFundamentals(ticker, dateStr);
         });
 
         setTimeout(() => {
@@ -1366,6 +1391,7 @@ async function renderTransactionMarkers(symbol) {
     try {
         const response = await fetch(`/transactions/ticker/${symbol}`);
         if (!response.ok) {
+            delete transactionNotesMap[symbol];
             priceSeries.setMarkers([]);
             return;
         }
@@ -1374,6 +1400,7 @@ async function renderTransactionMarkers(symbol) {
         // Exclude DEPOSIT and WITHDRAWAL since they aren't stock transactions
         const tradeTrans = transactions.filter(t => ['BUY', 'SELL', 'SHORT', 'COVER'].includes(t.type));
         if (tradeTrans.length === 0) {
+            delete transactionNotesMap[symbol];
             priceSeries.setMarkers([]);
             return;
         }
@@ -1399,6 +1426,15 @@ async function renderTransactionMarkers(symbol) {
                 grouped[timeKey] = [];
             }
             grouped[timeKey].push(t);
+        });
+
+        // Store notes for popup on chart click
+        if (!transactionNotesMap[symbol]) transactionNotesMap[symbol] = {};
+        Object.keys(grouped).forEach(timeKey => {
+            transactionNotesMap[symbol][timeKey] = grouped[timeKey].map(t => {
+                const portfolioName = portfoliosMap.get(t.portfolio_id) || `P${t.portfolio_id}`;
+                return { type: t.type, note: t.note, quantity: t.quantity, price: t.price, portfolioName, id: t.id };
+            });
         });
 
         const markers = [];
@@ -1452,6 +1488,7 @@ async function renderTransactionMarkers(symbol) {
         priceSeries.setMarkers(markers);
     } catch (err) {
         console.error("Error loading transaction markers:", err);
+        delete transactionNotesMap[symbol];
         priceSeries.setMarkers([]);
     }
 }
@@ -2747,6 +2784,65 @@ function redrawAllDrawings() {
         renderDrawing(drawingCtx, preview, true);
         drawingCtx.globalAlpha = 1.0;
     }
+
+    drawTransactionNoteDots();
+}
+
+function drawTransactionNoteDots() {
+    if (!drawingCtx || !mainChart || !priceSeries || !activeTicker) return;
+    const notesMap = transactionNotesMap[activeTicker];
+    if (!notesMap) return;
+    const ts = mainChart.timeScale();
+
+    // Compute zoom scale to make dots match marker sizing
+    let scale = 1;
+    const vRange = ts.getVisibleLogicalRange();
+    if (vRange) {
+        const visibleBars = Math.max(1, vRange.to - vRange.from);
+        scale = Math.max(0.3, Math.min(1, 120 / visibleBars));
+    }
+
+    drawingCtx.save();
+    Object.keys(notesMap).forEach(timeKey => {
+        const txs = notesMap[timeKey];
+        if (!txs.some(t => t.note)) return;
+        const x = ts.timeToCoordinate(timeKey);
+        if (x == null) return;
+
+        const isBuy = txs.filter(t => t.type === 'BUY' || t.type === 'COVER').length >= txs.length / 2;
+        const avgPrice = txs.reduce((s, t) => s + parseFloat(t.price), 0) / txs.length;
+        let y = priceToY(avgPrice);
+        if (y == null) {
+            const logical = ts.timeToLogical(timeKey);
+            if (logical == null) return;
+            for (let offset = 0; offset < 200; offset++) {
+                const dirs = [offset, -offset];
+                for (const d of dirs) {
+                    const bar = priceSeries.dataByIndex(Math.round(logical) + d);
+                    if (!bar) continue;
+                    const refVal = bar.low != null ? (isBuy ? bar.low : bar.high) : bar.value;
+                    if (refVal == null) continue;
+                    y = priceToY(refVal);
+                    if (y != null) break;
+                }
+                if (y != null) break;
+            }
+            if (y == null) return;
+        } else {
+            y += (isBuy ? 1 : -1) * 18 * scale;
+        }
+
+        const r = Math.max(1.5, 4 * scale);
+        const lw = Math.max(0.5, scale);
+        drawingCtx.fillStyle = '#ffffff';
+        drawingCtx.beginPath();
+        drawingCtx.arc(x, y, r, 0, Math.PI * 2);
+        drawingCtx.fill();
+        drawingCtx.strokeStyle = 'rgba(0,0,0,0.4)';
+        drawingCtx.lineWidth = lw;
+        drawingCtx.stroke();
+    });
+    drawingCtx.restore();
 }
 
 // --- Dispatch ---
@@ -7661,6 +7757,11 @@ let transDatePickr = null;
 let cashDatePickr = null;
 let deleteStartDatePickr = null;
 
+// Portfolio auto-refresh timer
+let refreshTimerInterval = null;
+let refreshTimerRemaining = 0;
+let refreshTimerRunning = false;
+
 async function initPortfolioView() {
     await loadPortfolios();
     await loadCommissionPlans();
@@ -7837,19 +7938,120 @@ async function deleteCommissionPlan(id) {
     }
 }
 
+// Portfolio auto-refresh timer
+async function refreshPortfolioWithPriceUpdate() {
+    if (!activePortfolioId) return;
+    const statusEl = document.getElementById('refresh-countdown');
+    if (statusEl) statusEl.textContent = '⟳';
+    try {
+        // Recupera le posizioni correnti per conoscere i ticker
+        const resp = await fetch(`/portfolios/${activePortfolioId}/summary`);
+        const data = await resp.json();
+        const positions = data.positions || [];
+        const tickers = [...new Set(positions.map(p => p.ticker).filter(Boolean))];
+
+        // Aggiorna i prezzi da Yahoo per ogni ticker
+        if (tickers.length > 0) {
+            if (statusEl) statusEl.textContent = `⟳ ${tickers.length} ticker...`;
+            // Update one by one to avoid overloading
+            for (const t of tickers) {
+                try {
+                    await fetch(`/tickers/${encodeURIComponent(t)}/update-data/?years=1`, { method: 'POST' });
+                } catch (_) {}
+            }
+        }
+
+        // Ora aggiorna la UI con i dati freschi
+        await refreshPortfolio();
+    } catch (err) {
+        console.error("refreshPortfolioWithPriceUpdate error:", err);
+        // Fallback: almeno prova il refresh normale
+        await refreshPortfolio();
+    }
+    if (statusEl && refreshTimerRunning) {
+        const m = Math.floor(refreshTimerRemaining / 60);
+        const s = refreshTimerRemaining % 60;
+        statusEl.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    }
+}
+
+function startRefreshTimer() {
+    stopRefreshTimer();
+    const val = parseInt(document.getElementById('refresh-interval-value').value) || 1;
+    const unit = document.getElementById('refresh-interval-unit').value;
+    refreshTimerRemaining = unit === 'minutes' ? val * 60 : val;
+    if (refreshTimerRemaining <= 0) refreshTimerRemaining = 60;
+    refreshTimerRunning = true;
+    document.getElementById('refresh-timer-start-btn').textContent = '⏹ Stop';
+    updateRefreshCountdown();
+    refreshTimerInterval = setInterval(() => {
+        refreshTimerRemaining--;
+        if (refreshTimerRemaining <= 0) {
+            refreshTimerRemaining = 0;
+            updateRefreshCountdown();
+            if (activePortfolioId) refreshPortfolioWithPriceUpdate();
+            const val2 = parseInt(document.getElementById('refresh-interval-value').value) || 1;
+            const unit2 = document.getElementById('refresh-interval-unit').value;
+            refreshTimerRemaining = unit2 === 'minutes' ? val2 * 60 : val2;
+        }
+        updateRefreshCountdown();
+    }, 1000);
+}
+
+function stopRefreshTimer() {
+    if (refreshTimerInterval) {
+        clearInterval(refreshTimerInterval);
+        refreshTimerInterval = null;
+    }
+    refreshTimerRunning = false;
+    document.getElementById('refresh-timer-start-btn').textContent = '▶ Avvia';
+    document.getElementById('refresh-countdown').textContent = '--:--';
+}
+
+function updateRefreshCountdown() {
+    const el = document.getElementById('refresh-countdown');
+    if (!el) return;
+    const m = Math.floor(refreshTimerRemaining / 60);
+    const s = refreshTimerRemaining % 60;
+    el.textContent = `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+// Collega i bottoni del timer (script eseguito a fine body, DOM già pronto)
+(function() {
+    const startBtn = document.getElementById('refresh-timer-start-btn');
+    if (startBtn) {
+        startBtn.addEventListener('click', () => {
+            if (refreshTimerRunning) {
+                stopRefreshTimer();
+            } else {
+                startRefreshTimer();
+            }
+        });
+    }
+    const refreshNowBtn = document.getElementById('refresh-portfolio-now-btn');
+    if (refreshNowBtn) {
+        refreshNowBtn.addEventListener('click', () => {
+            if (activePortfolioId) refreshPortfolioWithPriceUpdate();
+        });
+    }
+})();
+
 // Event Listeners for Portfolio Select
 if (document.getElementById('portfolio-select')) {
     document.getElementById('portfolio-select').addEventListener('change', (e) => {
+        stopRefreshTimer();
         activePortfolioId = e.target.value;
         if (activePortfolioId) {
             document.getElementById('portfolio-summary-dashboard').style.display = 'grid';
             document.getElementById('portfolio-actions').style.display = 'flex';
+            document.getElementById('portfolio-refresh-timer-bar').style.display = 'flex';
             document.getElementById('portfolio-positions-container').style.display = 'block';
             document.getElementById('portfolio-history-container').style.display = 'block';
             refreshPortfolio();
         } else {
             document.getElementById('portfolio-summary-dashboard').style.display = 'none';
             document.getElementById('portfolio-actions').style.display = 'none';
+            document.getElementById('portfolio-refresh-timer-bar').style.display = 'none';
             document.getElementById('portfolio-positions-container').style.display = 'none';
             document.getElementById('portfolio-history-container').style.display = 'none';
         }
@@ -7920,7 +8122,11 @@ function renderPortfolioPositions() {
     const tbody = document.getElementById('portfolio-positions-body');
     if (!tbody) return;
     tbody.innerHTML = '';
-    
+
+    const posTable = document.getElementById('portfolio-positions-table');
+    const hideInst = currentPortfolioPositions.length > 0 && currentPortfolioPositions.every(p => (p.currency || activePortfolioBaseCurrency) === activePortfolioBaseCurrency);
+    if (posTable) posTable.classList.toggle('hide-instrument', hideInst);
+
     const curr = activePortfolioBaseCurrency;
     
     const v = (id) => document.getElementById(id)?.value.toLowerCase() || '';
@@ -8038,8 +8244,9 @@ function renderPortfolioPositions() {
         const initialVal = (pos.current_value_instrument ?? 0) - (pos.unrealized_pl_instrument ?? 0);
         const pctBase = initialBase !== 0 ? (pos.unrealized_pl / initialBase * 100) : 0;
         const pctVal = initialVal !== 0 ? ((pos.unrealized_pl_instrument ?? 0) / initialVal * 100) : 0;
-        const pctBaseColor = pctBase >= 0 ? 'var(--up-color)' : 'var(--down-color)';
-        const pctValColor = pctVal >= 0 ? 'var(--up-color)' : 'var(--down-color)';
+        const signalPct = pos.signal_return_pct;
+        const pctBaseColor = isSignal ? (signalPct != null && signalPct >= 0 ? 'var(--up-color)' : 'var(--down-color)') : (pctBase >= 0 ? 'var(--up-color)' : 'var(--down-color)');
+        const pctValColor = isSignal ? (signalPct != null && signalPct >= 0 ? 'var(--up-color)' : 'var(--down-color)') : (pctVal >= 0 ? 'var(--up-color)' : 'var(--down-color)');
         const instrumentCurrency = pos.currency || curr;
         const pmcInstrument = pos.pmc_instrument ?? 0.0;
         
@@ -8047,22 +8254,32 @@ function renderPortfolioPositions() {
         const days = openDate ? Math.floor((now - new Date(openDate)) / 86400000) : 0;
         const weight = activePortfolioTotalValue > 0 ? (pos.current_value / activePortfolioTotalValue * 100) : 0;
 
+        const notesArr = pos.transaction_notes || [];
+        const hasNotes = notesArr.some(n => n.note);
+        if (hasNotes) {
+            const notesJson = encodeURIComponent(JSON.stringify(notesArr)).replace(/'/g,'%27');
+            pos._noteBtnHtml = `<button class="header-btn small" style="background: var(--accent-color);" onclick="event.stopPropagation(); openMultiNoteModal(decodeURIComponent('${encodeURIComponent(pos.ticker).replace(/'/g,'%27')}'), JSON.parse(decodeURIComponent('${notesJson}')))">👁</button>`;
+        } else {
+            pos._noteBtnHtml = '';
+        }
+
         tr.innerHTML = `
             <td><a href="#" class="ticker-link" onclick="event.stopPropagation(); event.preventDefault(); goToTicker('${pos.ticker}')">${pos.ticker}</a>${isSignal ? ' <span style="color: var(--accent-color); font-size: 0.7rem;" title="Segnale - posizione non ancora aperta">[SEGNALE]</span>' : ''}</td>
             <td>${openDate || '—'}</td>
             <td>${openDate ? days : '—'}</td>
             <td>${isSignal ? '—' : pos.quantity.toFixed(0)}</td>
             <td>${isSignal ? '—' : pos.pmc.toFixed(2) + ' ' + curr}</td>
-            <td>${isSignal ? '—' : pmcInstrument.toFixed(2) + ' ' + instrumentCurrency}</td>
+            <td class="instrument-col">${isSignal ? '—' : pmcInstrument.toFixed(2) + ' ' + instrumentCurrency}</td>
             <td>${pos.current_price ? pos.current_price.toFixed(2) + ' ' + instrumentCurrency : '—'}</td>
             <td>${isSignal ? '—' : pos.current_value.toFixed(2) + ' ' + curr}</td>
-            <td>${isSignal ? '—' : (pos.current_value_instrument ?? 0).toFixed(2) + ' ' + instrumentCurrency}</td>
+            <td class="instrument-col">${isSignal ? '—' : (pos.current_value_instrument ?? 0).toFixed(2) + ' ' + instrumentCurrency}</td>
             <td style="color: ${pnlColor}; font-weight: bold;">${isSignal ? '—' : pnl.toFixed(2) + ' ' + curr}</td>
-            <td style="color: ${pnlInstrumentColor}; font-weight: bold;">${isSignal ? '—' : pnlInstrument.toFixed(2) + ' ' + instrumentCurrency}</td>
-            <td style="color: ${pctBaseColor}; font-weight: bold;">${isSignal || initialBase === 0 ? '—' : pctBase.toFixed(2) + '%'}</td>
-            <td style="color: ${pctValColor}; font-weight: bold;">${isSignal || initialVal === 0 ? '—' : pctVal.toFixed(2) + '%'}</td>
+            <td class="instrument-col" style="color: ${pnlInstrumentColor}; font-weight: bold;">${isSignal ? '—' : pnlInstrument.toFixed(2) + ' ' + instrumentCurrency}</td>
+            <td style="color: ${pctBaseColor}; font-weight: bold;">${isSignal ? (pos.signal_return_pct != null ? (pos.signal_return_pct >= 0 ? '+' : '') + pos.signal_return_pct.toFixed(2) + '%' : '—') : (initialBase === 0 ? '—' : pctBase.toFixed(2) + '%')}</td>
+            <td class="instrument-col" style="color: ${pctValColor}; font-weight: bold;">${isSignal ? (pos.signal_return_pct != null ? (pos.signal_return_pct >= 0 ? '+' : '') + pos.signal_return_pct.toFixed(2) + '%' : '—') : (initialVal === 0 ? '—' : pctVal.toFixed(2) + '%')}</td>
             <td style="color: ${pos.daily_change_pct != null && pos.daily_change_pct >= 0 ? 'var(--up-color)' : 'var(--down-color)'}; font-weight: bold;">${pos.daily_change_pct != null ? (pos.daily_change_pct >= 0 ? '+' : '') + pos.daily_change_pct.toFixed(2) + '%' : '—'}</td>
             <td style="font-weight: bold;">${isSignal ? '—' : weight.toFixed(1) + '%'}</td>
+            <td>${pos._noteBtnHtml || '—'}</td>
             <td>
                 ${isSignal 
                     ? `<button class="header-btn small" style="background: var(--success-color);" onclick="event.stopPropagation(); openBuyModal('${pos.ticker}')">Apri</button>` 
@@ -8141,6 +8358,10 @@ function renderPortfolioHistory() {
     const tbody = document.getElementById('portfolio-history-body');
     if (!tbody) return;
     tbody.innerHTML = '';
+
+    const histTable = document.getElementById('portfolio-history-table');
+    const hideInst = currentTransactions.length > 0 && currentTransactions.every(t => (t.instrument_currency || activePortfolioBaseCurrency) === activePortfolioBaseCurrency);
+    if (histTable) histTable.classList.toggle('hide-instrument', hideInst);
     
     const vh = (id) => document.getElementById(id)?.value.toLowerCase() || '';
     const filters = {
@@ -8217,6 +8438,9 @@ function renderPortfolioHistory() {
             const tickerHtml = t.ticker ? `<a href="#" class="ticker-link" onclick="event.preventDefault(); goToTicker('${t.ticker}')">${t.ticker}</a>` : '-';
             const cvVal = (t.price || 0) * (t.quantity || 0);
             const cvBase = cvVal * (t.exchange_rate || 1.0);
+            const histTickerEnc = encodeURIComponent(t.ticker||'').replace(/'/g,'%27');
+            const histNoteEnc = t.note ? encodeURIComponent(t.note).replace(/'/g,'%27') : '';
+            const histNoteHtml = t.note ? `<button class="header-btn small" style="background: var(--accent-color);" onclick="event.stopPropagation(); openNoteModal(decodeURIComponent('${histTickerEnc}'), decodeURIComponent('${histNoteEnc}'))">👁</button>` : '—';
             
             tr.innerHTML = `
                 <td>${formattedDate}</td>
@@ -8225,10 +8449,11 @@ function renderPortfolioHistory() {
                 <td>${t.quantity.toFixed(0)}</td>
                 <td>${t.price.toFixed(2)}</td>
                 <td>${cvBase.toFixed(2)}</td>
-                <td>${cvVal.toFixed(2)}</td>
-                <td>${t.instrument_currency}</td>
-                <td>${t.exchange_rate.toFixed(4)}</td>
+                <td class="instrument-col">${cvVal.toFixed(2)}</td>
+                <td class="instrument-col">${t.instrument_currency}</td>
+                <td class="instrument-col">${t.exchange_rate.toFixed(4)}</td>
                 <td>${t.commission_paid.toFixed(2)}</td>
+                <td>${histNoteHtml}</td>
                 <td>
                     <button class="header-btn secondary small" style="margin-right: 4px;" onclick="openEditTransactionModal(${t.id})">Mod</button>
                     <button class="header-btn danger small" onclick="deleteTransaction(${t.id})">Del</button>
@@ -8304,6 +8529,40 @@ if (document.getElementById('manage-commission-plans-btn')) {
     };
 }
 
+function openNoteModal(ticker, note) {
+    document.getElementById('note-modal-title').textContent = ticker ? `Nota — ${ticker}` : 'Nota Transazione';
+    const content = document.getElementById('note-modal-content');
+    content.innerHTML = '';
+    const div = document.createElement('div');
+    div.style.cssText = 'white-space: pre-wrap; line-height: 1.5;';
+    div.textContent = `${ticker ? '[' + ticker + '] ' : ''}${note || ''}`;
+    content.appendChild(div);
+    document.getElementById('note-modal').classList.remove('hidden');
+}
+window.openNoteModal = openNoteModal;
+
+function openMultiNoteModal(ticker, notes) {
+    document.getElementById('note-modal-title').textContent = `Note — ${ticker}`;
+    const content = document.getElementById('note-modal-content');
+    content.innerHTML = '';
+    notes.forEach((item, i) => {
+        if (!item.note) return;
+        const row = document.createElement('div');
+        row.style.cssText = 'margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border-color);';
+        const dateEl = document.createElement('div');
+        dateEl.style.cssText = 'font-size: 0.8rem; color: var(--text-muted); margin-bottom: 4px; font-weight: bold;';
+        dateEl.textContent = item.date || '—';
+        row.appendChild(dateEl);
+        const noteEl = document.createElement('div');
+        noteEl.style.cssText = 'white-space: pre-wrap; line-height: 1.5;';
+        noteEl.textContent = item.note;
+        row.appendChild(noteEl);
+        content.appendChild(row);
+    });
+    document.getElementById('note-modal').classList.remove('hidden');
+}
+window.openMultiNoteModal = openMultiNoteModal;
+
 function closePositionModal(ticker, quantity, currentPrice) {
     editingTransactionId = null;
     const titleEl = document.getElementById('transaction-modal-title');
@@ -8329,6 +8588,7 @@ function closePositionModal(ticker, quantity, currentPrice) {
     if (transDatePickr) transDatePickr.setDate(val, false);
     else document.getElementById('trans-date').value = val;
     
+    document.getElementById('trans-note').value = '';
     document.getElementById('trans-short-fee-row').style.display = 'none';
 }
 window.closePositionModal = closePositionModal;
@@ -8373,6 +8633,7 @@ function openEditTransactionModal(id) {
         document.getElementById('trans-fx').value = t.exchange_rate;
         document.getElementById('trans-commission-plan').value = t.commission_plan_id || '';
         document.getElementById('trans-short-fee').value = t.short_borrow_fee_rate || 0;
+        document.getElementById('trans-note').value = t.note || '';
         
         document.getElementById('trans-short-fee-row').style.display = t.type === 'SHORT' ? 'flex' : 'none';
         
@@ -8441,6 +8702,7 @@ if (document.getElementById('add-transaction-btn')) {
         else document.getElementById('trans-date').value = val;
         if (activeTicker) document.getElementById('trans-ticker').value = activeTicker;
         document.getElementById('trans-short-fee-row').style.display = 'none';
+        document.getElementById('trans-note').value = '';
         const cvInput = document.getElementById('trans-cv');
         if (cvInput) cvInput.value = '';
         
@@ -8464,6 +8726,7 @@ if (document.getElementById('close-position-top-btn')) {
         else document.getElementById('trans-date').value = val;
         if (activeTicker) document.getElementById('trans-ticker').value = activeTicker;
         document.getElementById('trans-short-fee-row').style.display = 'none';
+        document.getElementById('trans-note').value = '';
         
         updateAutomaticExchangeRate();
     };
@@ -8569,6 +8832,7 @@ if (document.getElementById('save-transaction-btn')) {
         const exchange_rate = parseFloat(document.getElementById('trans-fx').value) || 1.0;
         const commission_plan_id = document.getElementById('trans-commission-plan').value || null;
         const short_borrow_fee_rate = parseFloat(document.getElementById('trans-short-fee').value) || 0;
+        const note = document.getElementById('trans-note').value || '';
 
         if (!ticker || isNaN(quantity) || isNaN(price)) return alert("Compila tutti i campi obbligatori");
 
@@ -8584,7 +8848,8 @@ if (document.getElementById('save-transaction-btn')) {
                     ticker, type, date, quantity, price, 
                     instrument_currency, exchange_rate, 
                     commission_plan_id: commission_plan_id ? parseInt(commission_plan_id) : null,
-                    short_borrow_fee_rate
+                    short_borrow_fee_rate,
+                    note
                 })
             });
             if (response.ok) {

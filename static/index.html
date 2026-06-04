@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Financial Screener & Monitor</title>
-    <link rel="stylesheet" href="style.css?v=5">
+    <link rel="stylesheet" href="style.css?v=7">
     <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css">
@@ -901,6 +901,19 @@
                     <button id="close-position-top-btn" class="header-btn" style="background: var(--danger-color);">Chiudi Posizione</button>
                     <button id="add-cash-btn" class="header-btn secondary">Deposita / Preleva</button>
                 </div>
+
+                <!-- Auto Refresh Timer -->
+                <div id="portfolio-refresh-timer-bar" style="display: none; align-items: center; gap: 8px; margin-bottom: 20px; padding: 8px 12px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid var(--border-color);">
+                    <span style="font-size: 0.85rem; color: var(--text-secondary);">⏱ Aggiornamento automatico:</span>
+                    <input type="number" id="refresh-interval-value" value="1" min="1" max="3600" style="width: 60px; padding: 3px 5px;">
+                    <select id="refresh-interval-unit" style="width: 80px; padding: 3px 5px;">
+                        <option value="seconds">Secondi</option>
+                        <option value="minutes" selected>Minuti</option>
+                    </select>
+                    <button id="refresh-timer-start-btn" class="header-btn secondary" style="padding: 3px 12px;">▶ Avvia</button>
+                    <button id="refresh-portfolio-now-btn" class="header-btn secondary" style="padding: 3px 12px;" title="Aggiorna ora i prezzi da Yahoo">⟳ Ora</button>
+                    <span id="refresh-countdown" style="font-family: monospace; font-size: 1.1rem; font-weight: bold; color: var(--accent-color); margin-left: 5px;">--:--</span>
+                </div>
                 </div>
             </div>
 
@@ -922,16 +935,17 @@
                                 <th onclick="togglePosSort('days')" class="sortable-th">Giorni <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('quantity')" class="sortable-th">Quantità <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('pmc')" class="sortable-th">PMC (Base) <span class="sort-arrow"></span></th>
-                                <th onclick="togglePosSort('pmc_instrument')" class="sortable-th">PMC (Valuta) <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('pmc_instrument')" class="sortable-th instrument-col">PMC (Valuta) <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('current_price')" class="sortable-th">Prezzo Attuale <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('current_value')" class="sortable-th">Valore C. (Base) <span class="sort-arrow"></span></th>
-                                <th onclick="togglePosSort('current_value_instrument')" class="sortable-th">Valore C. (Valuta) <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('current_value_instrument')" class="sortable-th instrument-col">Valore C. (Valuta) <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('unrealized_pl')" class="sortable-th">P&L (Base) <span class="sort-arrow"></span></th>
-                                <th onclick="togglePosSort('unrealized_pl_instrument')" class="sortable-th">P&L (Valuta) <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('unrealized_pl_instrument')" class="sortable-th instrument-col">P&L (Valuta) <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('pct_base')" class="sortable-th">% (Base) <span class="sort-arrow"></span></th>
-                                <th onclick="togglePosSort('pct_val')" class="sortable-th">% (Valuta) <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('pct_val')" class="sortable-th instrument-col">% (Valuta) <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('daily_change_pct')" class="sortable-th">Var. % Giornaliera <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('weight')" class="sortable-th">% Portfolio <span class="sort-arrow"></span></th>
+                                <th>Note</th>
                                 <th>Azioni</th>
                             </tr>
                             <tr class="filter-row">
@@ -940,16 +954,17 @@
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-days-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-days-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-qty-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-qty-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pmc-base-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pmc-base-max" class="portfolio-pos-filter"></div></th>
-                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pmc-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pmc-val-max" class="portfolio-pos-filter"></div></th>
+                                <th class="instrument-col"><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pmc-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pmc-val-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-price-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-price-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-value-base-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-value-base-max" class="portfolio-pos-filter"></div></th>
-                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-value-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-value-val-max" class="portfolio-pos-filter"></div></th>
+                                <th class="instrument-col"><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-value-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-value-val-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pnl-base-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pnl-base-max" class="portfolio-pos-filter"></div></th>
-                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pnl-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pnl-val-max" class="portfolio-pos-filter"></div></th>
+                                <th class="instrument-col"><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pnl-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pnl-val-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pct-base-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pct-base-max" class="portfolio-pos-filter"></div></th>
-                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pct-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pct-val-max" class="portfolio-pos-filter"></div></th>
+                                <th class="instrument-col"><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pct-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pct-val-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-daily-pct-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-daily-pct-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-weight-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-weight-max" class="portfolio-pos-filter"></div></th>
+                                <th></th>
                                 <th></th>
                             </tr>
                         </thead>
@@ -977,10 +992,11 @@
                                 <th onclick="toggleHistSort('quantity')" class="sortable-th">Quantità <span class="sort-arrow"></span></th>
                                 <th onclick="toggleHistSort('price')" class="sortable-th">Prezzo <span class="sort-arrow"></span></th>
                                 <th onclick="toggleHistSort('cvBase')" class="sortable-th">Controv. (Base) <span class="sort-arrow"></span></th>
-                                <th onclick="toggleHistSort('cvVal')" class="sortable-th">Controv. (Valuta) <span class="sort-arrow"></span></th>
-                                <th onclick="toggleHistSort('currency')" class="sortable-th">Valuta <span class="sort-arrow"></span></th>
-                                <th onclick="toggleHistSort('fx')" class="sortable-th">Cambio <span class="sort-arrow"></span></th>
+                                <th onclick="toggleHistSort('cvVal')" class="sortable-th instrument-col">Controv. (Valuta) <span class="sort-arrow"></span></th>
+                                <th onclick="toggleHistSort('currency')" class="sortable-th instrument-col">Valuta <span class="sort-arrow"></span></th>
+                                <th onclick="toggleHistSort('fx')" class="sortable-th instrument-col">Cambio <span class="sort-arrow"></span></th>
                                 <th onclick="toggleHistSort('comm')" class="sortable-th">Commissioni <span class="sort-arrow"></span></th>
+                                <th>Note</th>
                                 <th>Azioni</th>
                             </tr>
                             <tr class="filter-row">
@@ -990,10 +1006,11 @@
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-qty-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-qty-max" class="portfolio-hist-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-price-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-price-max" class="portfolio-hist-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-cv-base-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-cv-base-max" class="portfolio-hist-filter"></div></th>
-                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-cv-val-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-cv-val-max" class="portfolio-hist-filter"></div></th>
-                                <th><input type="text" placeholder="Filtra Valuta" id="hist-filter-currency" class="portfolio-hist-filter" style="width:100%"></th>
-                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-fx-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-fx-max" class="portfolio-hist-filter"></div></th>
+                                <th class="instrument-col"><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-cv-val-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-cv-val-max" class="portfolio-hist-filter"></div></th>
+                                <th class="instrument-col"><input type="text" placeholder="Filtra Valuta" id="hist-filter-currency" class="portfolio-hist-filter" style="width:100%"></th>
+                                <th class="instrument-col"><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-fx-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-fx-max" class="portfolio-hist-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-comm-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-comm-max" class="portfolio-hist-filter"></div></th>
+                                <th></th>
                                 <th></th>
                             </tr>
                         </thead>
@@ -1252,6 +1269,10 @@
                     <label>Costo Short (% Annuo):</label>
                     <input type="number" step="0.01" id="trans-short-fee" value="0.0" style="flex:1;">
                 </div>
+                <div class="modal-form-row" style="flex-direction: column; align-items: stretch;">
+                    <label style="margin-bottom: 4px;">Note:</label>
+                    <textarea id="trans-note" rows="3" style="resize: vertical; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-color); color: var(--text-color); font-family: inherit; font-size: 0.85rem;"></textarea>
+                </div>
             </div>
             <div class="modal-footer">
                 <button class="secondary" onclick="document.getElementById('transaction-modal').classList.add('hidden')">Annulla</button>
@@ -1331,7 +1352,23 @@
         </div>
 
 
-    <script src="script.js?v=9"></script>
+    <!-- Note Viewer Modal -->
+    <div id="note-modal" class="modal-overlay hidden">
+        <div class="modal-box" style="max-width: 500px;">
+            <div class="modal-header">
+                <span id="note-modal-title">Nota Transazione</span>
+                <button class="modal-close-btn" onclick="document.getElementById('note-modal').classList.add('hidden')">×</button>
+            </div>
+            <div class="modal-body">
+                <div id="note-modal-content" style="white-space: pre-wrap; line-height: 1.5; padding: 8px 0;"></div>
+            </div>
+            <div class="modal-footer">
+                <button onclick="document.getElementById('note-modal').classList.add('hidden')">Chiudi</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js?v=11"></script>
 </body>
 
 </html>

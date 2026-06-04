@@ -1114,6 +1114,7 @@ def update_transaction(transaction_id: int, transaction: schemas.TransactionCrea
     db_trans.commission_plan_id = transaction.commission_plan_id
     db_trans.commission_paid = commission_paid
     db_trans.short_borrow_fee_rate = transaction.short_borrow_fee_rate
+    db_trans.note = transaction.note
 
     # 4. Apply new cash impact
     if db_trans.type == "DEPOSIT":

@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, UniqueConstraint, text
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text, UniqueConstraint, text
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.sql import func
@@ -257,6 +257,7 @@ class Transaction(Base):
     commission_plan_id = Column(Integer, ForeignKey("commission_plans.id"), nullable=True)
     commission_paid = Column(Float, default=0.0) # In base_currency
     short_borrow_fee_rate = Column(Float, default=0.0) # Annual percentage rate e.g., 5.0 for 5%
+    note = Column(Text, default="")
 
     portfolio = relationship("Portfolio", back_populates="transactions")
     commission_plan = relationship("CommissionPlan", back_populates="transactions")
@@ -268,10 +269,17 @@ def init_db():
         conn = engine.connect()
         conn.execute(text("ALTER TABLE drawings ADD COLUMN line_style VARCHAR DEFAULT 'solid'"))
         conn.commit()
+        conn.close()
     except Exception:
         pass  # Column already exists
-    finally:
+    # Migration: add note column to transactions if it doesn't exist
+    try:
+        conn = engine.connect()
+        conn.execute(text("ALTER TABLE transactions ADD COLUMN note TEXT DEFAULT ''"))
+        conn.commit()
         conn.close()
+    except Exception:
+        pass  # Column already exists
 
 if __name__ == "__main__":
     init_db()

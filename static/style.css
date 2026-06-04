@@ -1576,3 +1576,7 @@ canvas.drawing-layer.active {
     color: var(--text-secondary);
     font-size: 0.65rem;
 }
+
+.hide-instrument .instrument-col {
+    display: none;
+}

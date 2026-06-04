@@ -363,6 +363,7 @@ class TransactionBase(BaseModel):
     commission_plan_id: Optional[int] = None
     commission_paid: float = 0.0
     short_borrow_fee_rate: float = 0.0
+    note: Optional[str] = None
 
 class TransactionCreate(TransactionBase):
     pass

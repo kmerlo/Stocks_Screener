@@ -1317,10 +1317,16 @@ class FinanceLogic:
                     "pmc_instrument": 0.0,
                     "total_invested_instrument": 0.0,
                     "realized_pl_instrument": 0.0,
-                    "open_date": t.date.strftime("%Y-%m-%d") if t.date else None
+                    "open_date": t.date.strftime("%Y-%m-%d") if t.date else None,
+                    "transaction_notes": []
                 }
             
             p = positions[sym]
+            if t.note:
+                p["transaction_notes"].append({
+                    "date": t.date.strftime("%Y-%m-%d") if t.date else None,
+                    "note": t.note
+                })
             trade_qty = t.quantity
             trade_price = t.price * t.exchange_rate  # Convert to base currency
             trade_price_instrument = t.price         # In instrument currency
@@ -1424,7 +1430,27 @@ class FinanceLogic:
                     total_current_value += current_val_base
                     unrealized_pl += unreal
                 else:
-                    p["current_price"] = 0.0
+                    latest_price_obj = db.query(PriceData).filter(PriceData.symbol == sym).order_by(PriceData.date.desc()).first()
+                    prev_price_obj = None
+                    if latest_price_obj:
+                        prev_price_obj = db.query(PriceData).filter(
+                            PriceData.symbol == sym,
+                            PriceData.date < latest_price_obj.date
+                        ).order_by(PriceData.date.desc()).first()
+                    latest_price = latest_price_obj.close if latest_price_obj else 0.0
+                    p["current_price"] = latest_price
+                    p["daily_change_pct"] = ((latest_price - prev_price_obj.close) / prev_price_obj.close * 100.0) if prev_price_obj and prev_price_obj.close and prev_price_obj.close > 0 else None
+
+                    entry_price_obj = None
+                    if p["open_date"]:
+                        entry_date = datetime.strptime(p["open_date"], "%Y-%m-%d").date()
+                        entry_price_obj = db.query(PriceData).filter(
+                            PriceData.symbol == sym,
+                            PriceData.date >= entry_date
+                        ).order_by(PriceData.date.asc()).first()
+                    entry_price = entry_price_obj.close if entry_price_obj else None
+                    p["signal_return_pct"] = ((latest_price - entry_price) / entry_price * 100.0) if entry_price and entry_price > 0 else None
+
                     p["current_value"] = 0.0
                     p["current_value_instrument"] = 0.0
                     p["unrealized_pl"] = 0.0
