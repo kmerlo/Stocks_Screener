@@ -1382,12 +1382,27 @@ class FinanceLogic:
                 if abs(p["quantity"]) > 0.0001:
                     latest_price_obj = db.query(PriceData).filter(PriceData.symbol == sym).order_by(PriceData.date.desc()).first()
                     
+                    # Get previous close for daily change calculation
+                    prev_price_obj = None
+                    if latest_price_obj:
+                        prev_price_obj = db.query(PriceData).filter(
+                            PriceData.symbol == sym,
+                            PriceData.date < latest_price_obj.date
+                        ).order_by(PriceData.date.desc()).first()
+                    
                     fx_pair = (p["currency"], portfolio.base_currency)
                     if fx_pair not in fx_cache:
                         fx_cache[fx_pair] = self.get_fx_rate(fx_pair[0], fx_pair[1])
                     latest_fx = fx_cache[fx_pair]
 
                     latest_price = latest_price_obj.close if latest_price_obj else p["pmc"] / latest_fx if latest_fx else 0.0
+                    
+                    # Daily change percentage
+                    prev_close = prev_price_obj.close if prev_price_obj else None
+                    if prev_close and prev_close > 0:
+                        p["daily_change_pct"] = ((latest_price - prev_close) / prev_close) * 100.0
+                    else:
+                        p["daily_change_pct"] = None
                     
                     current_val_base = (latest_price * p["quantity"]) * latest_fx
                     

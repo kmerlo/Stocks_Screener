@@ -3821,12 +3821,19 @@ if (historicalTickerSelect) {
     });
 }
 
+function isChartPortfolioNone() {
+    const sel = document.getElementById('chart-portfolio-select');
+    return !sel || !sel.value;
+}
+
 const activeListSelect = document.getElementById('active-list-select');
 if (activeListSelect) {
     activeListSelect.addEventListener('change', (e) => {
         console.log("[active-list-select] Change detected:", e.target.value);
         activeListId = e.target.value;
-        loadListDetails(activeListId, activeView === 'monitoring');
+        if (isChartPortfolioNone()) {
+            loadListDetails(activeListId, activeView === 'monitoring');
+        }
     });
 } else {
     console.error("[script.js] CRITICAL: #active-list-select not found during top-level execution!");
@@ -4180,11 +4187,27 @@ document.getElementById('refresh-chart-btn').addEventListener('click', () => {
     }
 });
 
+document.getElementById('csv-upload-input').addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+        let name = file.name.replace(/\.csv$/i, '');
+        // Remove common suffixes like "_posizioni_aperte", "_positions", etc.
+        name = name.replace(/_(?:posizioni_aperte|positions|tickers?|export)\s*$/i, '');
+        // Remove parenthesized content like "(EUR)", "(USD)"
+        name = name.replace(/\s*\([^)]*\)/g, '').trim();
+        // Collapse multiple spaces
+        name = name.replace(/\s{2,}/g, ' ').trim();
+        if (name) {
+            document.getElementById('new-list-name').value = name;
+        }
+    }
+});
+
 document.getElementById('upload-csv-btn').addEventListener('click', async () => {
     const fileInput = document.getElementById('csv-upload-input');
 
     if (!activeListId) {
-        alert("Per favore, seleziona una lista prima di caricare il CSV.");
+        alert("Per favore, crea o seleziona prima una lista.");
         return;
     }
 
@@ -4211,6 +4234,10 @@ document.getElementById('upload-csv-btn').addEventListener('click', async () => 
         // Se siamo nella vista liste, aggiorniamo il dettaglio per mostrare i ticker appena aggiunti
         if (activeView === 'lists') {
             await loadListDetails(activeListId);
+        }
+        // Verifica se sono stati aggiunti ticker
+        if (result.tickers && result.tickers.length === 0) {
+            console.warn("Nessun ticker importato dal CSV. Verifica il formato (separatore ';', colonna 1 = ticker)");
         }
     } catch (err) {
         alert("Errore durante il caricamento del CSV: " + err.message);
@@ -7676,7 +7703,7 @@ async function loadChartPortfolios() {
         const select = document.getElementById('chart-portfolio-select');
         if (select) {
             const currentVal = select.value;
-            select.innerHTML = '<option value="">Tutti i ticker...</option>';
+            select.innerHTML = '<option value="">Nessuno</option>';
             portfolios.forEach(p => {
                 const opt = document.createElement('option');
                 opt.value = p.id;
@@ -7911,6 +7938,7 @@ function renderPortfolioPositions() {
         pnlValMin: v('pos-filter-pnl-val-min'), pnlValMax: v('pos-filter-pnl-val-max'),
         pctBaseMin: v('pos-filter-pct-base-min'), pctBaseMax: v('pos-filter-pct-base-max'),
         pctValMin: v('pos-filter-pct-val-min'), pctValMax: v('pos-filter-pct-val-max'),
+        dailyPctMin: v('pos-filter-daily-pct-min'), dailyPctMax: v('pos-filter-daily-pct-max'),
         weightMin: v('pos-filter-weight-min'), weightMax: v('pos-filter-weight-max')
     };
 
@@ -7949,6 +7977,7 @@ function renderPortfolioPositions() {
         const pctVal = initialVal !== 0 ? ((pos.unrealized_pl_instrument ?? 0) / initialVal * 100) : 0;
         if (!inMinMax(pctBase, filters.pctBaseMin, filters.pctBaseMax)) return false;
         if (!inMinMax(pctVal, filters.pctValMin, filters.pctValMax)) return false;
+        if (!inMinMax(pos.daily_change_pct, filters.dailyPctMin, filters.dailyPctMax)) return false;
         const weight = activePortfolioTotalValue > 0 ? (pos.current_value / activePortfolioTotalValue * 100) : 0;
         if (!inMinMax(weight, filters.weightMin, filters.weightMax)) return false;
         return true;
@@ -7990,7 +8019,7 @@ function renderPortfolioPositions() {
         });
     }
 
-    const posHeaders = ['ticker','date','days','quantity','pmc','pmc_instrument','current_price','current_value','current_value_instrument','unrealized_pl','unrealized_pl_instrument','pct_base','pct_val','weight'];
+    const posHeaders = ['ticker','date','days','quantity','pmc','pmc_instrument','current_price','current_value','current_value_instrument','unrealized_pl','unrealized_pl_instrument','pct_base','pct_val','daily_change_pct','weight'];
 
     filtered.forEach(pos => {
         const tr = document.createElement('tr');
@@ -8032,6 +8061,7 @@ function renderPortfolioPositions() {
             <td style="color: ${pnlInstrumentColor}; font-weight: bold;">${isSignal ? '—' : pnlInstrument.toFixed(2) + ' ' + instrumentCurrency}</td>
             <td style="color: ${pctBaseColor}; font-weight: bold;">${isSignal || initialBase === 0 ? '—' : pctBase.toFixed(2) + '%'}</td>
             <td style="color: ${pctValColor}; font-weight: bold;">${isSignal || initialVal === 0 ? '—' : pctVal.toFixed(2) + '%'}</td>
+            <td style="color: ${pos.daily_change_pct != null && pos.daily_change_pct >= 0 ? 'var(--up-color)' : 'var(--down-color)'}; font-weight: bold;">${pos.daily_change_pct != null ? (pos.daily_change_pct >= 0 ? '+' : '') + pos.daily_change_pct.toFixed(2) + '%' : '—'}</td>
             <td style="font-weight: bold;">${isSignal ? '—' : weight.toFixed(1) + '%'}</td>
             <td>
                 ${isSignal 
@@ -8042,6 +8072,29 @@ function renderPortfolioPositions() {
         tbody.appendChild(tr);
     });
     updateSortArrows('pos-header-row', posSortState);
+}
+
+function exportPortfolioTickersCSV() {
+    if (!currentPortfolioPositions || currentPortfolioPositions.length === 0) {
+        alert("Nessuna posizione aperta da esportare.");
+        return;
+    }
+    const seen = new Set();
+    const rows = currentPortfolioPositions
+        .filter(p => p.ticker && !seen.has(p.ticker) && seen.add(p.ticker))
+        .map(p => `${p.ticker};`);
+    const csvContent = "yahoo_ticker;name\n" + rows.join("\n");
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    const portfolioName = document.getElementById('portfolio-select')
+        ?.options[document.getElementById('portfolio-select').selectedIndex]?.text || 'portafoglio';
+    link.setAttribute("href", url);
+    link.setAttribute("download", `${portfolioName}_posizioni_aperte.csv`);
+    link.style.visibility = 'hidden';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 }
 
 function toggleHistSort(key) {
@@ -8430,6 +8483,13 @@ if (document.getElementById('add-cash-btn')) {
         if (cashDatePickr) cashDatePickr.setDate(val, false);
         else document.getElementById('cash-date').value = val;
     };
+}
+
+if (document.getElementById('export-portfolio-csv-btn')) {
+    document.getElementById('export-portfolio-csv-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
+        exportPortfolioTickersCSV();
+    });
 }
 
 // Form Submission Handlers

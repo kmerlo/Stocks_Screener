@@ -907,7 +907,10 @@
             <!-- Open Positions -->
             <div id="portfolio-positions-container" class="card" style="display: none; margin-bottom: 20px;">
                 <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
-                    <h3 style="margin: 0;">Posizioni Aperte</h3>
+                    <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
+                        <h3 style="margin: 0;">Posizioni Aperte</h3>
+                        <button id="export-portfolio-csv-btn" class="header-btn secondary" style="font-size: 0.85rem;" title="Esporta ticker delle posizioni aperte in formato CSV">Export CSV</button>
+                    </div>
                 </div>
                 <div class="collapsible-body">
                     <div class="table-scroll-wrapper">
@@ -927,6 +930,7 @@
                                 <th onclick="togglePosSort('unrealized_pl_instrument')" class="sortable-th">P&L (Valuta) <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('pct_base')" class="sortable-th">% (Base) <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('pct_val')" class="sortable-th">% (Valuta) <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('daily_change_pct')" class="sortable-th">Var. % Giornaliera <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('weight')" class="sortable-th">% Portfolio <span class="sort-arrow"></span></th>
                                 <th>Azioni</th>
                             </tr>
@@ -944,6 +948,7 @@
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pnl-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pnl-val-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pct-base-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pct-base-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pct-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pct-val-max" class="portfolio-pos-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-daily-pct-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-daily-pct-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-weight-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-weight-max" class="portfolio-pos-filter"></div></th>
                                 <th></th>
                             </tr>
