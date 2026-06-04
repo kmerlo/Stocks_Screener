@@ -8937,10 +8937,20 @@ if (document.getElementById('save-cash-btn')) {
 }
 
 document.querySelectorAll('.portfolio-pos-filter').forEach(input => {
-    input.addEventListener('input', renderPortfolioPositions);
+    let debounceTimer = null;
+    input.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(renderPortfolioPositions, 500);
+    });
+    input.addEventListener('click', (e) => e.stopPropagation());
 });
 document.querySelectorAll('.portfolio-hist-filter').forEach(input => {
-    input.addEventListener('input', renderPortfolioHistory);
+    let debounceTimer = null;
+    input.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(renderPortfolioHistory, 500);
+    });
+    input.addEventListener('click', (e) => e.stopPropagation());
 });
 
 console.log("[script.js] Script execution reached end.");
