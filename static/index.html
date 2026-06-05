@@ -65,16 +65,28 @@
 
                 <div class="header-group">
                     <label>Anni:</label>
-                    <input type="number" id="extend-years" value="10" min="1" max="50" style="width: 45px;">
-                    <button id="update-data-btn" class="header-btn">Aggiorna Dati</button>
+                    <input type="number" id="extend-years" value="10" min="1" max="50" style="width: 35px;">
+                    <button id="update-data-btn" class="header-btn">Agg. Dati</button>
                     <button id="extend-history-btn" class="header-btn secondary">Estendi</button>
-                    <button id="delete-ticker-data-btn" class="header-btn danger">Elimina</button>
-                    <label style="margin-left: 10px; font-size: 0.8rem;">Dal:</label>
-                    <input type="text" id="delete-start-date" style="padding: 2px 5px; font-size: 0.8rem; width: 110px;" placeholder="gg/mm/aaaa">
-                    <button id="delete-data-from-date-btn" class="header-btn danger">Pulisci</button>
+                    <button id="delete-ticker-data-btn" class="header-btn danger" style="padding: 4px 6px;">Elimina</button>
+                    <label style="margin-left: 6px; font-size: 0.75rem;">Dal:</label>
+                    <input type="text" id="delete-start-date" placeholder="gg/mm/aaaa">
+                    <button id="delete-data-from-date-btn" class="header-btn danger" style="padding: 4px 6px;">Pulisci</button>
                     <label class="bulk-label">
                         <input type="checkbox" id="bulk-apply"> Lista
                     </label>
+                </div>
+
+                <div class="header-group" id="auto-refresh-timer-bar">
+                    <span style="font-size: 0.75rem; color: var(--text-secondary); white-space: nowrap;">Auto:</span>
+                    <input type="number" id="refresh-interval-value" value="1" min="1" max="3600" style="width: 35px; padding: 2px 3px; height: 26px;">
+                    <select id="refresh-interval-unit" style="width: 45px; padding: 2px 2px; height: 26px; font-size: 0.75rem;">
+                        <option value="seconds">Sec</option>
+                        <option value="minutes" selected>Min</option>
+                    </select>
+                    <button id="refresh-timer-start-btn" class="header-btn secondary" style="padding: 2px 6px;">▶</button>
+                    <button id="refresh-now-btn" class="header-btn secondary" style="padding: 2px 6px;" title="Aggiorna ora">⟳</button>
+                    <span id="refresh-countdown" style="font-family: monospace; font-size: 0.85rem; font-weight: bold; color: var(--accent-color); margin-left: 2px;">--:--</span>
                 </div>
 
                 <div class="header-divider"></div>
@@ -909,18 +921,6 @@
                     <button id="add-cash-btn" class="header-btn secondary">Deposita / Preleva</button>
                 </div>
 
-                <!-- Auto Refresh Timer -->
-                <div id="portfolio-refresh-timer-bar" style="display: none; align-items: center; gap: 8px; margin-bottom: 20px; padding: 8px 12px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid var(--border-color);">
-                    <span style="font-size: 0.85rem; color: var(--text-secondary);">⏱ Aggiornamento automatico:</span>
-                    <input type="number" id="refresh-interval-value" value="1" min="1" max="3600" style="width: 60px; padding: 3px 5px;">
-                    <select id="refresh-interval-unit" style="width: 80px; padding: 3px 5px;">
-                        <option value="seconds">Secondi</option>
-                        <option value="minutes" selected>Minuti</option>
-                    </select>
-                    <button id="refresh-timer-start-btn" class="header-btn secondary" style="padding: 3px 12px;">▶ Avvia</button>
-                    <button id="refresh-portfolio-now-btn" class="header-btn secondary" style="padding: 3px 12px;" title="Aggiorna ora i prezzi da Yahoo">⟳ Ora</button>
-                    <span id="refresh-countdown" style="font-family: monospace; font-size: 1.1rem; font-weight: bold; color: var(--accent-color); margin-left: 5px;">--:--</span>
-                </div>
                 </div>
             </div>
 

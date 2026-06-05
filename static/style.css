@@ -112,9 +112,9 @@ header {
 #global-controls {
     display: flex;
     align-items: center;
-    gap: 15px;
+    gap: 8px;
     height: 100%;
-    max-width: calc(100vw - 400px);
+    max-width: calc(100vw - 360px);
     overflow-x: auto;
     scrollbar-width: none;
     /* Hide scrollbar for clean look */
@@ -127,7 +127,7 @@ header {
 .header-group {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 5px;
     font-size: 0.85rem;
 }
 
@@ -138,9 +138,9 @@ header {
 }
 
 .header-btn {
-    padding: 4px 10px;
-    font-size: 0.8rem;
-    height: 28px;
+    padding: 4px 7px;
+    font-size: 0.78rem;
+    height: 26px;
     display: flex;
     align-items: center;
 }
@@ -170,8 +170,16 @@ header {
 
 #active-list-select {
     font-size: 0.8rem;
-    padding: 2px 5px;
-    height: 28px;
+    padding: 2px 4px;
+    height: 26px;
+}
+
+.header-date-input {
+    width: 75px !important;
+    height: 26px !important;
+    padding: 2px 4px !important;
+    font-size: 0.75rem !important;
+    margin: 0 !important;
 }
 
 .row-count-badge {

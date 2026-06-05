@@ -3,6 +3,7 @@ let activeView = 'monitoring';
 let activeListId = null;
 let activeTicker = null;
 let activeTickerName = null;
+let lastChartedSymbol = null;
 let mainChart = null;
 let priceSeries = null;
 let mainLegend = null;
@@ -806,6 +807,7 @@ function initChart() {
         select.addEventListener('change', async (e) => {
             const slotIndex = parseInt(e.target.dataset.slot);
             const symbol = e.target.value;
+            console.log(`[slot-select change] slot=${slotIndex} symbol=${symbol} lastChartedSymbol=${lastChartedSymbol}`);
             if (!symbol) return;
             // Activate the target slot so settings applied next (chart type, indicators,
             // templates, etc.) act on the chart the user just modified.
@@ -1251,6 +1253,19 @@ document.getElementById('scale-type-select').addEventListener('change', () => {
 async function updateChart(symbol) {
     if (!symbol) return;
     if (!mainChart || chartSlots.length === 0) return;
+
+    if (symbol !== lastChartedSymbol) {
+        const status = document.getElementById('update-status');
+        if (status) status.textContent = `⟳ Aggiorno ${symbol}...`;
+        console.log(`[updateChart] Ticker change detected ${lastChartedSymbol} -> ${symbol}, downloading latest data...`);
+        try {
+            const res = await apiCall(`/tickers/${encodeURIComponent(symbol)}/update-data/?years=1`, 'POST');
+            console.log(`[updateChart] Download OK:`, res);
+        } catch (err) {
+            console.warn(`[updateChart] Auto-update on ticker change failed for ${symbol}:`, err);
+        }
+        lastChartedSymbol = symbol;
+    }
 
     // Load drawings for this ticker
     await loadDrawings(symbol);
@@ -7662,7 +7677,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             dateFormat: "Y-m-d",
             altInput: true,
             altFormat: "d/m/Y",
-            allowInput: true
+            allowInput: true,
+            altInputClass: "header-date-input"
         });
 
         transDatePickr = flatpickr("#trans-date", {
@@ -7938,35 +7954,69 @@ async function deleteCommissionPlan(id) {
     }
 }
 
-// Portfolio auto-refresh timer
-async function refreshPortfolioWithPriceUpdate() {
-    if (!activePortfolioId) return;
+// Global auto-refresh timer (works across Portfolio / Grafico / Screening views)
+async function autoRefreshAction() {
     const statusEl = document.getElementById('refresh-countdown');
     if (statusEl) statusEl.textContent = '⟳';
     try {
-        // Recupera le posizioni correnti per conoscere i ticker
-        const resp = await fetch(`/portfolios/${activePortfolioId}/summary`);
-        const data = await resp.json();
-        const positions = data.positions || [];
-        const tickers = [...new Set(positions.map(p => p.ticker).filter(Boolean))];
-
-        // Aggiorna i prezzi da Yahoo per ogni ticker
-        if (tickers.length > 0) {
-            if (statusEl) statusEl.textContent = `⟳ ${tickers.length} ticker...`;
-            // Update one by one to avoid overloading
-            for (const t of tickers) {
-                try {
-                    await fetch(`/tickers/${encodeURIComponent(t)}/update-data/?years=1`, { method: 'POST' });
-                } catch (_) {}
+        if (activeView === 'portfolio') {
+            if (!activePortfolioId) return;
+            const resp = await fetch(`/portfolios/${activePortfolioId}/summary`);
+            const data = await resp.json();
+            const positions = data.positions || [];
+            const tickers = [...new Set(positions.map(p => p.ticker).filter(Boolean))];
+            if (tickers.length > 0) {
+                if (statusEl) statusEl.textContent = `⟳ ${tickers.length} ticker...`;
+                for (const t of tickers) {
+                    try {
+                        await fetch(`/tickers/${encodeURIComponent(t)}/update-data/?years=1`, { method: 'POST' });
+                    } catch (_) {}
+                }
+            }
+            await refreshPortfolio();
+        } else if (activeView === 'monitoring') {
+            const isBulk = document.getElementById('bulk-apply')?.checked;
+            if (isBulk) {
+                if (!activeListId) return;
+                const tickerOptions = getListTickers();
+                if (tickerOptions.length === 0) return;
+                if (statusEl) statusEl.textContent = `⟳ ${tickerOptions.length} ticker...`;
+                let count = 0;
+                for (const symbol of tickerOptions) {
+                    try {
+                        await fetch(`/tickers/${encodeURIComponent(symbol)}/update-data/?years=1`, { method: 'POST' });
+                        count++;
+                        if (statusEl) statusEl.textContent = `⟳ ${count}/${tickerOptions.length}`;
+                        if (symbol === activeTicker) updateChart(symbol);
+                    } catch (_) {}
+                    if (!refreshTimerRunning) break;
+                }
+                checkAndNotifyAlarms();
+            } else {
+                if (!activeTicker) return;
+                if (statusEl) statusEl.textContent = `⟳ ${activeTicker}...`;
+                await fetch(`/tickers/${encodeURIComponent(activeTicker)}/update-data/?years=1`, { method: 'POST' });
+                await updateChart(activeTicker);
+                checkAndNotifyAlarms();
+            }
+        } else if (activeView === 'screening') {
+            if (!activeListId) return;
+            if (statusEl) statusEl.textContent = '⟳ screening...';
+            const runBtn = document.querySelector('#screening-view .tab-content:not(.hidden) .run-screening-btn');
+            if (runBtn) {
+                if (runBtn.classList.contains('dynamic-run')) {
+                    const sheet = screeningSheets.find(s => s.id == activeScreeningSheetId);
+                    if (sheet && sheet.columns.length > 0) runBtn.click();
+                } else {
+                    runBtn.click();
+                }
+            } else {
+                const fundBtn = document.getElementById('run-fundamental-screening-btn');
+                if (fundBtn && !fundBtn.disabled) fundBtn.click();
             }
         }
-
-        // Ora aggiorna la UI con i dati freschi
-        await refreshPortfolio();
     } catch (err) {
-        console.error("refreshPortfolioWithPriceUpdate error:", err);
-        // Fallback: almeno prova il refresh normale
-        await refreshPortfolio();
+        console.error("autoRefreshAction error:", err);
     }
     if (statusEl && refreshTimerRunning) {
         const m = Math.floor(refreshTimerRemaining / 60);
@@ -7989,7 +8039,7 @@ function startRefreshTimer() {
         if (refreshTimerRemaining <= 0) {
             refreshTimerRemaining = 0;
             updateRefreshCountdown();
-            if (activePortfolioId) refreshPortfolioWithPriceUpdate();
+            autoRefreshAction();
             const val2 = parseInt(document.getElementById('refresh-interval-value').value) || 1;
             const unit2 = document.getElementById('refresh-interval-unit').value;
             refreshTimerRemaining = unit2 === 'minutes' ? val2 * 60 : val2;
@@ -8004,7 +8054,7 @@ function stopRefreshTimer() {
         refreshTimerInterval = null;
     }
     refreshTimerRunning = false;
-    document.getElementById('refresh-timer-start-btn').textContent = '▶ Avvia';
+    document.getElementById('refresh-timer-start-btn').textContent = '▶';
     document.getElementById('refresh-countdown').textContent = '--:--';
 }
 
@@ -8028,10 +8078,10 @@ function updateRefreshCountdown() {
             }
         });
     }
-    const refreshNowBtn = document.getElementById('refresh-portfolio-now-btn');
+    const refreshNowBtn = document.getElementById('refresh-now-btn');
     if (refreshNowBtn) {
         refreshNowBtn.addEventListener('click', () => {
-            if (activePortfolioId) refreshPortfolioWithPriceUpdate();
+            autoRefreshAction();
         });
     }
 })();
@@ -8044,14 +8094,12 @@ if (document.getElementById('portfolio-select')) {
         if (activePortfolioId) {
             document.getElementById('portfolio-summary-dashboard').style.display = 'grid';
             document.getElementById('portfolio-actions').style.display = 'flex';
-            document.getElementById('portfolio-refresh-timer-bar').style.display = 'flex';
             document.getElementById('portfolio-positions-container').style.display = 'block';
             document.getElementById('portfolio-history-container').style.display = 'block';
             refreshPortfolio();
         } else {
             document.getElementById('portfolio-summary-dashboard').style.display = 'none';
             document.getElementById('portfolio-actions').style.display = 'none';
-            document.getElementById('portfolio-refresh-timer-bar').style.display = 'none';
             document.getElementById('portfolio-positions-container').style.display = 'none';
             document.getElementById('portfolio-history-container').style.display = 'none';
         }
