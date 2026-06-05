@@ -1,0 +1,1 @@
+Trovato il bug! La <select id="portfolio-select"> è dentro il .collapsible-header e quando l'utente seleziona un portafoglio, il click bubbla all'header che toggle .collapsed sulla card. Fix: impedire il toggle quando il click proviene da elementi interattivi.

@@ -23,6 +23,27 @@ from contextlib import asynccontextmanager
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 
+def _compute_dividend_cash_delta(price: float, quantity: float, exchange_rate: float, tax_rate: float) -> float:
+    """
+    Compute the cash impact (signed) of a DIVIDEND transaction in the portfolio's base currency.
+    Sign of `quantity` determines direction (|quantity| = number of shares):
+      - quantity > 0  => LONG side: receive dividend  (cash += gross_base - tax_base)
+      - quantity < 0  => SHORT side: pay dividend    (cash -= gross_base + tax_base)
+    `price` is dividend per share in instrument currency (always positive).
+    """
+    shares = abs(quantity)
+    is_short = quantity < 0
+    gross_base = price * shares * exchange_rate
+    tax_base = gross_base * (tax_rate / 100.0) if tax_rate else 0.0
+    if is_short:
+        return -(gross_base + tax_base)
+    else:
+        return gross_base - tax_base
+
+def _reverse_dividend_cash_delta(price: float, quantity: float, exchange_rate: float, tax_rate: float) -> float:
+    """Return the negation of _compute_dividend_cash_delta for cash reversal."""
+    return -_compute_dividend_cash_delta(price, quantity, exchange_rate, tax_rate)
+
 def init_system_sheets():
     db = db_mod.SessionLocal()
     try:
@@ -1028,6 +1049,18 @@ def create_transaction(portfolio_id: int, transaction: schemas.TransactionCreate
         db_portfolio.cash_balance += db_trans.quantity
     elif db_trans.type == "WITHDRAWAL":
         db_portfolio.cash_balance -= db_trans.quantity
+    elif db_trans.type == "DIVIDEND":
+        # Dividends update cash only (not position quantity/PMC).
+        # The sign of `quantity` encodes direction: + = receive (LONG), - = pay (SHORT).
+        # Tax is stored in commission_paid (in base_currency) for reversibility.
+        shares = abs(db_trans.quantity)
+        gross_base = db_trans.price * shares * db_trans.exchange_rate
+        tax_base = gross_base * (db_trans.tax_rate / 100.0) if (db_trans.tax_rate and db_trans.tax_rate > 0) else 0.0
+        db_trans.commission_paid = tax_base
+        if db_trans.quantity >= 0:
+            db_portfolio.cash_balance += (gross_base - tax_base)
+        else:
+            db_portfolio.cash_balance -= (gross_base + tax_base)
     else:
         # Cash accounting
         trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
@@ -1053,6 +1086,10 @@ def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
         db_portfolio.cash_balance -= db_trans.quantity
     elif db_trans.type == "WITHDRAWAL":
         db_portfolio.cash_balance += db_trans.quantity
+    elif db_trans.type == "DIVIDEND":
+        db_portfolio.cash_balance -= _compute_dividend_cash_delta(
+            db_trans.price, db_trans.quantity, db_trans.exchange_rate, db_trans.tax_rate or 0.0
+        )
     else:
         trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
         if db_trans.type in ["BUY", "COVER"]:
@@ -1079,6 +1116,10 @@ def update_transaction(transaction_id: int, transaction: schemas.TransactionCrea
         db_portfolio.cash_balance -= db_trans.quantity
     elif db_trans.type == "WITHDRAWAL":
         db_portfolio.cash_balance += db_trans.quantity
+    elif db_trans.type == "DIVIDEND":
+        db_portfolio.cash_balance -= _compute_dividend_cash_delta(
+            db_trans.price, db_trans.quantity, db_trans.exchange_rate, db_trans.tax_rate or 0.0
+        )
     else:
         old_trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
         if db_trans.type in ["BUY", "COVER"]:
@@ -1114,6 +1155,7 @@ def update_transaction(transaction_id: int, transaction: schemas.TransactionCrea
     db_trans.commission_plan_id = transaction.commission_plan_id
     db_trans.commission_paid = commission_paid
     db_trans.short_borrow_fee_rate = transaction.short_borrow_fee_rate
+    db_trans.tax_rate = transaction.tax_rate
     db_trans.note = transaction.note
 
     # 4. Apply new cash impact
@@ -1121,6 +1163,16 @@ def update_transaction(transaction_id: int, transaction: schemas.TransactionCrea
         db_portfolio.cash_balance += db_trans.quantity
     elif db_trans.type == "WITHDRAWAL":
         db_portfolio.cash_balance -= db_trans.quantity
+    elif db_trans.type == "DIVIDEND":
+        # For DIVIDEND, the tax is stored in commission_paid for reversibility
+        shares = abs(db_trans.quantity)
+        gross_base = db_trans.price * shares * db_trans.exchange_rate
+        tax_base = gross_base * (db_trans.tax_rate / 100.0) if (db_trans.tax_rate and db_trans.tax_rate > 0) else 0.0
+        db_trans.commission_paid = tax_base
+        if db_trans.quantity >= 0:
+            db_portfolio.cash_balance += (gross_base - tax_base)
+        else:
+            db_portfolio.cash_balance -= (gross_base + tax_base)
     else:
         new_trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
         if db_trans.type in ["BUY", "COVER"]:

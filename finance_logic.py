@@ -1377,7 +1377,23 @@ class FinanceLogic:
         total_invested = 0.0
         total_current_value = 0.0
         unrealized_pl = 0.0
-        
+
+        # Dividend aggregates (in base currency)
+        total_gross_dividends = 0.0
+        total_dividend_tax = 0.0
+        total_net_dividends = 0.0
+        for _t in transactions:
+            if _t.type == "DIVIDEND":
+                shares = abs(_t.quantity)
+                gross_base = _t.price * shares * _t.exchange_rate
+                tax_base = gross_base * ((_t.tax_rate or 0.0) / 100.0)
+                total_gross_dividends += gross_base
+                total_dividend_tax += tax_base
+                if _t.quantity >= 0:
+                    total_net_dividends += (gross_base - tax_base)
+                else:
+                    total_net_dividends -= (gross_base + tax_base)
+
         # Cache for FX rates to avoid multiple calls for the same currency pair
         fx_cache = {}
 
@@ -1470,6 +1486,9 @@ class FinanceLogic:
                 "total_current_value": total_current_value,
                 "total_unrealized_pl": unrealized_pl,
                 "total_realized_pl": sum(p["realized_pl"] for p in positions.values()),
+                "total_gross_dividends": total_gross_dividends,
+                "total_dividend_tax": total_dividend_tax,
+                "total_net_dividends": total_net_dividends,
                 "net_liquidity": portfolio.cash_balance + total_current_value
             },
             "positions": active_positions

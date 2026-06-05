@@ -8103,6 +8103,13 @@ function renderPortfolioSummary(data) {
     reEl.textContent = `${rePnl.toFixed(2)} ${curr}`;
     reEl.style.color = rePnl >= 0 ? 'var(--up-color)' : 'var(--down-color)';
 
+    const netDiv = summary.total_net_dividends ?? 0;
+    const divEl = document.getElementById('portfolio-dividends-display');
+    if (divEl) {
+        divEl.textContent = `${netDiv.toFixed(2)} ${curr}`;
+        divEl.style.color = netDiv >= 0 ? '#fbc02d' : '#e57373';
+    }
+
     currentPortfolioPositions = data.positions;
     activePortfolioTotalValue = summary.total_current_value;
     renderPortfolioPositions();
@@ -8281,6 +8288,9 @@ function renderPortfolioPositions() {
             <td style="font-weight: bold;">${isSignal ? '—' : weight.toFixed(1) + '%'}</td>
             <td>${pos._noteBtnHtml || '—'}</td>
             <td>
+                <button class="header-btn small" style="background: ${isSignal ? 'rgba(251,192,45,0.4)' : (pos.quantity < 0 ? '#e57373' : '#fbc02d')}; color: ${isSignal ? 'var(--text-secondary)' : (pos.quantity < 0 ? '#fff' : '#1a1a1a')};" title="${isSignal ? 'Dividendo (posizione segnale)' : (pos.quantity < 0 ? 'Dividendo su short (costo)' : 'Aggiungi Dividendo')}" onclick="event.stopPropagation(); openDividendModal('${pos.ticker}', ${pos.quantity}, '${pos.currency || curr}', ${pos.quantity < 0 ? -1 : 1})">💰</button>
+            </td>
+            <td>
                 ${isSignal 
                     ? `<button class="header-btn small" style="background: var(--success-color);" onclick="event.stopPropagation(); openBuyModal('${pos.ticker}')">Apri</button>` 
                     : `<button class="header-btn danger small" onclick="event.stopPropagation(); closePositionModal('${pos.ticker}', ${pos.quantity}, ${pos.current_price})">Chiudi</button>`}
@@ -8445,7 +8455,7 @@ function renderPortfolioHistory() {
             tr.innerHTML = `
                 <td>${formattedDate}</td>
                 <td>${tickerHtml}</td>
-                <td><span class="badge" style="background: ${getTransTypeColor(t.type)}; border-radius: 4px; padding: 2px 6px; font-size: 0.75rem;">${t.type}</span></td>
+                <td><span class="badge" style="background: ${getTransTypeColor(t.type, t.quantity)}; border-radius: 4px; padding: 2px 6px; font-size: 0.75rem; color: ${t.type === 'DIVIDEND' ? '#1a1a1a' : '#fff'};">${t.type}</span></td>
                 <td>${t.quantity.toFixed(0)}</td>
                 <td>${t.price.toFixed(2)}</td>
                 <td>${cvBase.toFixed(2)}</td>
@@ -8464,7 +8474,7 @@ function renderPortfolioHistory() {
     updateSortArrows('hist-header-row', histSortState);
 }
 
-function getTransTypeColor(type) {
+function getTransTypeColor(type, quantity) {
     switch (type) {
         case 'BUY': return 'var(--up-color)';
         case 'SELL': return 'var(--down-color)';
@@ -8472,6 +8482,7 @@ function getTransTypeColor(type) {
         case 'COVER': return '#66bb6a';
         case 'DEPOSIT': return 'var(--accent-color)';
         case 'WITHDRAWAL': return '#78909c';
+        case 'DIVIDEND': return (quantity < 0) ? '#e57373' : '#fbc02d';
         default: return '#888';
     }
 }
@@ -8480,6 +8491,7 @@ async function deleteTransaction(id) {
     if (!confirm("Sei sicuro di voler eliminare questa transazione? Il saldo cash verrà ripristinato.")) return;
     try {
         await fetch(`/transactions/${id}`, { method: 'DELETE' });
+        dividendEditingId = null;
         refreshPortfolio();
     } catch (err) {
         alert("Errore nell'eliminazione: " + err.message);
@@ -8598,6 +8610,40 @@ function openEditTransactionModal(id) {
     if (!t) return;
     
     editingTransactionId = id;
+    
+    // Check if it is a dividend
+    if (t.type === 'DIVIDEND') {
+        dividendEditingId = id;
+        const titleEl = document.getElementById('dividend-modal-title');
+        if (titleEl) titleEl.textContent = `Modifica Dividendo — ${t.ticker}`;
+        const date = new Date(t.date);
+        date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+        const val = date.toISOString().slice(0, 16);
+        if (typeof divDatePickr !== 'undefined' && divDatePickr) divDatePickr.setDate(val, false);
+        else document.getElementById('div-date').value = val;
+        document.getElementById('div-ticker').value = t.ticker || '';
+        document.getElementById('div-currency').value = t.instrument_currency || 'EUR';
+        document.getElementById('div-fx').value = (t.exchange_rate || 1.0).toFixed(6);
+        document.getElementById('div-apply-tax').checked = (t.tax_rate || 0) > 0;
+        document.getElementById('div-tax-rate').value = t.tax_rate || 26;
+        document.getElementById('div-note').value = t.note || '';
+        // Determine direction from the signed quantity
+        const directionSign = (t.quantity < 0) ? -1 : 1;
+        window._dividendDirectionSign = directionSign;
+        if (Math.abs(t.quantity) === 1 && Math.abs(t.price) > 0) {
+            // Mode A (total)
+            setDividendMode('total');
+            document.getElementById('div-total').value = Math.abs(t.price * t.quantity).toFixed(2);
+        } else {
+            // Mode B (per share)
+            setDividendMode('per_share');
+            document.getElementById('div-per-share').value = Math.abs(t.price).toFixed(4);
+            document.getElementById('div-qty').value = t.quantity;
+        }
+        recomputeDividendCalc();
+        document.getElementById('dividend-modal').classList.remove('hidden');
+        return;
+    }
     
     // Check if it is a cash deposit/withdrawal or a normal trade
     if (t.type === 'DEPOSIT' || t.type === 'WITHDRAWAL') {
@@ -8932,6 +8978,269 @@ if (document.getElementById('save-cash-btn')) {
             }
         } catch (err) {
             alert("Errore: " + err.message);
+        }
+    };
+}
+
+// === Dividend Modal ===
+let dividendEditingId = null;
+
+function getDividendMode() {
+    const el = document.querySelector('input[name="div-mode"]:checked');
+    return el ? el.value : 'total';
+}
+
+function setDividendMode(mode) {
+    const totalRadio = document.querySelector('input[name="div-mode"][value="total"]');
+    const perShareRadio = document.querySelector('input[name="div-mode"][value="per_share"]');
+    if (totalRadio) totalRadio.checked = (mode === 'total');
+    if (perShareRadio) perShareRadio.checked = (mode === 'per_share');
+    const totalRow = document.getElementById('div-total-row');
+    const perShareRow = document.getElementById('div-per-share-row');
+    const qtyRow = document.getElementById('div-qty-row');
+    const dirRow = document.getElementById('div-direction-row');
+    if (mode === 'total') {
+        if (totalRow) totalRow.style.display = 'flex';
+        if (perShareRow) perShareRow.style.display = 'none';
+        if (qtyRow) qtyRow.style.display = 'none';
+        if (dirRow) dirRow.style.display = 'flex';
+    } else {
+        if (totalRow) totalRow.style.display = 'none';
+        if (perShareRow) perShareRow.style.display = 'flex';
+        if (qtyRow) qtyRow.style.display = 'flex';
+        if (dirRow) dirRow.style.display = 'flex';
+    }
+    recomputeDividendCalc();
+}
+
+function getDividendGrossInstrument() {
+    const mode = getDividendMode();
+    if (mode === 'total') {
+        const total = parseFloat(document.getElementById('div-total').value) || 0;
+        return Math.abs(total);
+    } else {
+        const ps = parseFloat(document.getElementById('div-per-share').value) || 0;
+        const qty = parseFloat(document.getElementById('div-qty').value) || 0;
+        return Math.abs(ps * qty);
+    }
+}
+
+function getDividendSignedShares() {
+    const mode = getDividendMode();
+    if (mode === 'total') {
+        // Direction inferred from a hidden sign carrier via the direction label
+        const sign = (window._dividendDirectionSign != null) ? window._dividendDirectionSign : 1;
+        return sign; // store as 1 (LONG) or -1 (SHORT) when total mode
+    } else {
+        const qty = parseFloat(document.getElementById('div-qty').value) || 0;
+        if (qty === 0) return 1;
+        return qty; // sign of qty encodes direction
+    }
+}
+
+function updateDividendDirectionLabel() {
+    const lbl = document.getElementById('div-direction-label');
+    if (!lbl) return;
+    const signed = getDividendSignedShares();
+    if (signed < 0) {
+        lbl.textContent = 'SHORT (paghi dividendo)';
+        lbl.style.color = '#e57373';
+    } else {
+        lbl.textContent = 'LONG (ricevi dividendo)';
+        lbl.style.color = '#66bb6a';
+    }
+}
+
+function recomputeDividendCalc() {
+    const grossInstr = getDividendGrossInstrument();
+    const fx = parseFloat(document.getElementById('div-fx').value) || 0;
+    const applyTax = document.getElementById('div-apply-tax')?.checked;
+    const taxRate = applyTax ? (parseFloat(document.getElementById('div-tax-rate').value) || 0) : 0;
+    const grossBase = grossInstr * fx;
+    const taxBase = grossBase * (taxRate / 100.0);
+    let netBase = grossBase - taxBase;
+    // If direction is SHORT, net becomes a cost
+    const signedShares = getDividendSignedShares();
+    if (signedShares < 0) {
+        // Cost: net is negative (we pay gross + tax)
+        netBase = -(grossBase + taxBase);
+    }
+    const curr = activePortfolioBaseCurrency || 'EUR';
+    const fmt = (v) => `${v.toFixed(2)} ${curr}`;
+    const grossEl = document.getElementById('div-gross-base');
+    const taxEl = document.getElementById('div-tax-base');
+    const netEl = document.getElementById('div-net-base');
+    if (grossEl) grossEl.textContent = fmt(grossBase);
+    if (taxEl) taxEl.textContent = fmt(taxBase);
+    if (netEl) {
+        netEl.textContent = fmt(netBase);
+        netEl.style.color = netBase >= 0 ? '#66bb6a' : '#e57373';
+    }
+    const taxRow = document.getElementById('div-tax-rate-row');
+    if (taxRow) taxRow.style.display = applyTax ? 'flex' : 'none';
+    updateDividendDirectionLabel();
+}
+
+function resetDividendModal() {
+    dividendEditingId = null;
+    document.getElementById('div-ticker').value = '';
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    const val = now.toISOString().slice(0, 16);
+    if (typeof divDatePickr !== 'undefined' && divDatePickr) divDatePickr.setDate(val, false);
+    else document.getElementById('div-date').value = val;
+    document.getElementById('div-currency').value = activePortfolioBaseCurrency || 'EUR';
+    document.getElementById('div-fx').value = '1.000000';
+    document.getElementById('div-total').value = '';
+    document.getElementById('div-per-share').value = '';
+    document.getElementById('div-qty').value = '';
+    document.getElementById('div-apply-tax').checked = true;
+    document.getElementById('div-tax-rate').value = '26';
+    document.getElementById('div-note').value = '';
+    window._dividendDirectionSign = 1;
+    setDividendMode('total');
+    recomputeDividendCalc();
+}
+
+function openDividendModal(ticker, quantity, currency, directionSign) {
+    const titleEl = document.getElementById('dividend-modal-title');
+    if (ticker) {
+        // Coming from a position row
+        if (titleEl) titleEl.textContent = (quantity < 0)
+            ? `Aggiungi Dividendo (SHORT) — ${ticker}`
+            : `Aggiungi Dividendo — ${ticker}`;
+        resetDividendModal();
+        dividendEditingId = null;
+        document.getElementById('div-ticker').value = ticker;
+        document.getElementById('div-currency').value = currency || activePortfolioBaseCurrency || 'EUR';
+        // For SHORT, the qty is negative; we prefill per-share mode with absolute value
+        window._dividendDirectionSign = (quantity < 0) ? -1 : 1;
+        setDividendMode('per_share');
+        document.getElementById('div-qty').value = Math.abs(quantity);
+        // Update FX to a sensible default; user can hit refresh via updateAutomaticExchangeRate
+        updateDividendExchangeRate();
+    } else {
+        // Top button: no position context
+        if (titleEl) titleEl.textContent = 'Aggiungi Dividendo';
+        resetDividendModal();
+    }
+    document.getElementById('dividend-modal').classList.remove('hidden');
+    recomputeDividendCalc();
+}
+window.openDividendModal = openDividendModal;
+
+async function updateDividendExchangeRate() {
+    if (!activePortfolioId) return;
+    const baseCurrency = activePortfolioBaseCurrency || 'EUR';
+    const instrumentCurrency = document.getElementById('div-currency').value;
+    const dateVal = document.getElementById('div-date').value;
+    if (instrumentCurrency === baseCurrency) {
+        document.getElementById('div-fx').value = '1.000000';
+        recomputeDividendCalc();
+        return;
+    }
+    if (!dateVal) return;
+    try {
+        const response = await fetch(`/fx_rate?base_currency=${baseCurrency}&instrument_currency=${instrumentCurrency}&date=${dateVal}`);
+        if (response.ok) {
+            const data = await response.json();
+            if (data.rate) {
+                document.getElementById('div-fx').value = data.rate.toFixed(6);
+                recomputeDividendCalc();
+            }
+        }
+    } catch (err) {
+        console.error("Error fetching FX rate (dividend):", err);
+    }
+}
+window.updateDividendExchangeRate = updateDividendExchangeRate;
+
+if (document.getElementById('add-dividend-btn')) {
+    document.getElementById('add-dividend-btn').onclick = () => {
+        openDividendModal(null, null, null, 1);
+    };
+}
+
+document.querySelectorAll('input[name="div-mode"]').forEach(r => {
+    r.addEventListener('change', (e) => setDividendMode(e.target.value));
+});
+
+['div-total', 'div-per-share', 'div-qty', 'div-fx', 'div-tax-rate'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', recomputeDividendCalc);
+});
+
+const divApplyTaxEl = document.getElementById('div-apply-tax');
+if (divApplyTaxEl) divApplyTaxEl.addEventListener('change', recomputeDividendCalc);
+
+const divCurrencyEl = document.getElementById('div-currency');
+if (divCurrencyEl) divCurrencyEl.addEventListener('change', updateDividendExchangeRate);
+
+const divDateEl = document.getElementById('div-date');
+if (divDateEl) divDateEl.addEventListener('change', updateDividendExchangeRate);
+
+if (document.getElementById('save-dividend-btn')) {
+    document.getElementById('save-dividend-btn').onclick = async () => {
+        if (!activePortfolioId) return;
+        const ticker = document.getElementById('div-ticker').value.trim().toUpperCase();
+        if (!ticker) return alert("Inserisci il ticker.");
+
+        const mode = getDividendMode();
+        let price = 0, quantity = 0;
+        if (mode === 'total') {
+            const total = parseFloat(document.getElementById('div-total').value) || 0;
+            if (total <= 0) return alert("Inserisci un importo totale positivo.");
+            quantity = getDividendSignedShares(); // 1 or -1
+            price = total;
+        } else {
+            const ps = parseFloat(document.getElementById('div-per-share').value) || 0;
+            const qty = parseFloat(document.getElementById('div-qty').value) || 0;
+            if (ps <= 0 || qty === 0) return alert("Inserisci dividendo per azione e quantità (con segno).");
+            price = ps;
+            quantity = qty;
+        }
+
+        const date = document.getElementById('div-date').value;
+        const instrument_currency = document.getElementById('div-currency').value;
+        const exchange_rate = parseFloat(document.getElementById('div-fx').value) || 1.0;
+        const applyTax = document.getElementById('div-apply-tax').checked;
+        const tax_rate = applyTax ? (parseFloat(document.getElementById('div-tax-rate').value) || 0) : 0;
+        const note = document.getElementById('div-note').value || '';
+
+        const url = dividendEditingId
+            ? `/transactions/${dividendEditingId}`
+            : `/portfolios/${activePortfolioId}/transactions/`;
+        const method = dividendEditingId ? 'PUT' : 'POST';
+
+        try {
+            const response = await fetch(url, {
+                method: method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    portfolio_id: parseInt(activePortfolioId),
+                    ticker,
+                    type: 'DIVIDEND',
+                    date,
+                    quantity,
+                    price,
+                    instrument_currency,
+                    exchange_rate,
+                    commission_plan_id: null,
+                    commission_paid: 0.0,
+                    short_borrow_fee_rate: 0.0,
+                    tax_rate,
+                    note
+                })
+            });
+            if (response.ok) {
+                document.getElementById('dividend-modal').classList.add('hidden');
+                refreshPortfolio();
+            } else {
+                const err = await response.json();
+                alert("Errore: " + JSON.stringify(err.detail));
+            }
+        } catch (err) {
+            alert("Errore nella richiesta: " + err.message);
         }
     };
 }

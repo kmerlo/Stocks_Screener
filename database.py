@@ -257,6 +257,7 @@ class Transaction(Base):
     commission_plan_id = Column(Integer, ForeignKey("commission_plans.id"), nullable=True)
     commission_paid = Column(Float, default=0.0) # In base_currency
     short_borrow_fee_rate = Column(Float, default=0.0) # Annual percentage rate e.g., 5.0 for 5%
+    tax_rate = Column(Float, default=0.0) # Dividend tax rate (percent), used for type=DIVIDEND
     note = Column(Text, default="")
 
     portfolio = relationship("Portfolio", back_populates="transactions")
@@ -276,6 +277,14 @@ def init_db():
     try:
         conn = engine.connect()
         conn.execute(text("ALTER TABLE transactions ADD COLUMN note TEXT DEFAULT ''"))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass  # Column already exists
+    # Migration: add tax_rate column to transactions if it doesn't exist
+    try:
+        conn = engine.connect()
+        conn.execute(text("ALTER TABLE transactions ADD COLUMN tax_rate FLOAT DEFAULT 0.0"))
         conn.commit()
         conn.close()
     except Exception:

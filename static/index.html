@@ -895,12 +895,17 @@
                         <div style="font-size: 0.9rem; color: var(--text-secondary);">P&L Realizzato</div>
                         <div id="portfolio-realized-display" style="font-size: 1.5rem; font-weight: bold; margin-top: 5px;">0.00</div>
                     </div>
+                    <div class="stat-box" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; text-align: center;" title="Già inclusi nella Liquidità (Cash)">
+                        <div style="font-size: 0.9rem; color: var(--text-secondary);">Dividendi Netti 💰</div>
+                        <div id="portfolio-dividends-display" style="font-size: 1.5rem; font-weight: bold; margin-top: 5px; color: #fbc02d;">0.00</div>
+                    </div>
                 </div>
 
                 <!-- Portfolio Actions -->
                 <div id="portfolio-actions" style="display: none; gap: 10px; margin-bottom: 20px;">
                     <button id="add-transaction-btn" class="header-btn" style="background: var(--success-color);">Apri Posizione</button>
                     <button id="close-position-top-btn" class="header-btn" style="background: var(--danger-color);">Chiudi Posizione</button>
+                    <button id="add-dividend-btn" class="header-btn" style="background: #fbc02d; color: #1a1a1a;">💰 Aggiungi Dividendo</button>
                     <button id="add-cash-btn" class="header-btn secondary">Deposita / Preleva</button>
                 </div>
 
@@ -948,6 +953,7 @@
                                 <th onclick="togglePosSort('daily_change_pct')" class="sortable-th">Var. % Giornaliera <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('weight')" class="sortable-th">% Portfolio <span class="sort-arrow"></span></th>
                                 <th>Note</th>
+                                <th>Dividendo</th>
                                 <th>Azioni</th>
                             </tr>
                             <tr class="filter-row">
@@ -966,6 +972,7 @@
                                 <th class="instrument-col"><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pct-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pct-val-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-daily-pct-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-daily-pct-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-weight-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-weight-max" class="portfolio-pos-filter"></div></th>
+                                <th></th>
                                 <th></th>
                                 <th></th>
                             </tr>
@@ -1310,6 +1317,103 @@
             <div class="modal-footer">
                 <button class="secondary" onclick="document.getElementById('cash-modal').classList.add('hidden')">Annulla</button>
                 <button id="save-cash-btn">Salva</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dividend Modal -->
+    <div id="dividend-modal" class="modal-overlay hidden">
+        <div class="modal-box" style="max-width: 520px;">
+            <div class="modal-header">
+                <span id="dividend-modal-title">Aggiungi Dividendo</span>
+                <button class="modal-close-btn" onclick="document.getElementById('dividend-modal').classList.add('hidden')">×</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-form-row">
+                    <label>Modalità:</label>
+                    <div style="display: flex; gap: 14px; flex: 1; align-items: center;">
+                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:normal;">
+                            <input type="radio" name="div-mode" value="total" checked>
+                            Importo Totale Lordo
+                        </label>
+                        <label style="display:flex; align-items:center; gap:6px; cursor:pointer; font-weight:normal;">
+                            <input type="radio" name="div-mode" value="per_share">
+                            Per Azione × Quantità
+                        </label>
+                    </div>
+                </div>
+                <div class="modal-form-row">
+                    <label>Ticker:</label>
+                    <input type="text" id="div-ticker" style="flex:1;" placeholder="Es: AAPL">
+                </div>
+                <div class="modal-form-row">
+                    <label>Data:</label>
+                    <input type="text" id="div-date" style="flex:1;" placeholder="gg/mm/aaaa --:--">
+                </div>
+                <div class="modal-form-row">
+                    <label>Valuta Strumento:</label>
+                    <select id="div-currency" style="flex:1;">
+                        <option value="EUR">EUR</option>
+                        <option value="USD">USD</option>
+                    </select>
+                </div>
+                <div class="modal-form-row">
+                    <label>Tasso di Cambio (Strumento → Base):</label>
+                    <input type="number" step="0.000001" id="div-fx" value="1.0" style="flex:1;">
+                </div>
+                <div class="modal-form-row" id="div-total-row">
+                    <label>Importo Lordo Totale:</label>
+                    <input type="number" step="0.01" id="div-total" style="flex:1;" placeholder="0.00">
+                </div>
+                <div class="modal-form-row" id="div-per-share-row" style="display: none;">
+                    <label>Dividendo per Azione:</label>
+                    <input type="number" step="0.0001" id="div-per-share" style="flex:1;" placeholder="0.00">
+                </div>
+                <div class="modal-form-row" id="div-qty-row" style="display: none;">
+                    <label>Quantità (azioni):</label>
+                    <input type="number" step="0.0001" id="div-qty" style="flex:1;" placeholder="0">
+                </div>
+                <div class="modal-form-row" id="div-direction-row" style="display: none;">
+                    <label>Direzione:</label>
+                    <div style="flex:1; padding: 6px 10px; background: rgba(255,255,255,0.05); border-radius: 4px; font-size: 0.85rem;">
+                        <span id="div-direction-label">LONG (ricevi dividendo)</span>
+                    </div>
+                </div>
+                <hr class="modal-divider" style="margin: 14px 0; border: 0; border-top: 1px solid var(--border-color);">
+                <div class="modal-form-row">
+                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:normal;">
+                        <input type="checkbox" id="div-apply-tax" checked>
+                        Applica Tasse
+                    </label>
+                </div>
+                <div class="modal-form-row" id="div-tax-rate-row">
+                    <label>Aliquota Tasse (%):</label>
+                    <input type="number" step="0.01" id="div-tax-rate" value="26" style="flex:1;">
+                </div>
+                <div class="modal-form-row" id="div-calc-row" style="background: rgba(255,255,255,0.04); padding: 10px; border-radius: 6px; margin-top: 6px;">
+                    <div style="flex:1; display: flex; flex-direction: column; gap: 4px; font-size: 0.9rem;">
+                        <div style="display:flex; justify-content:space-between;">
+                            <span style="color: var(--text-secondary);">Lordo:</span>
+                            <span id="div-gross-base" style="font-weight: bold;">0.00</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between;">
+                            <span style="color: var(--text-secondary);">Tasse:</span>
+                            <span id="div-tax-base" style="font-weight: bold; color: #e57373;">0.00</span>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; border-top: 1px solid var(--border-color); padding-top: 4px; margin-top: 4px;">
+                            <span style="color: var(--text-secondary); font-weight: bold;">Netto Base:</span>
+                            <span id="div-net-base" style="font-weight: bold; color: #66bb6a;">0.00</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-form-row" style="flex-direction: column; align-items: stretch; margin-top: 8px;">
+                    <label style="margin-bottom: 4px;">Note:</label>
+                    <textarea id="div-note" rows="2" style="resize: vertical; padding: 6px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-color); color: var(--text-color); font-family: inherit; font-size: 0.85rem;"></textarea>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="secondary" onclick="document.getElementById('dividend-modal').classList.add('hidden')">Annulla</button>
+                <button id="save-dividend-btn">Salva Dividendo</button>
             </div>
         </div>
     </div>
