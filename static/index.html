@@ -859,7 +859,7 @@
         <!-- Portfolio View -->
         <div id="portfolio-view" class="view-container hidden">
             <div class="card" style="margin-bottom: 20px;">
-                <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                <div class="collapsible-header" onclick="if (event.target.closest('select, button, input, a, label')) return; this.parentElement.classList.toggle('collapsed')">
                     <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
                         <h3 style="margin: 0;">Gestione Portafoglio</h3>
                         <div style="display: flex; gap: 10px;">
@@ -926,7 +926,7 @@
 
             <!-- Open Positions -->
             <div id="portfolio-positions-container" class="card" style="display: none; margin-bottom: 20px;">
-                <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                <div class="collapsible-header" onclick="if (event.target.closest('select, button, input, a, label')) return; this.parentElement.classList.toggle('collapsed')">
                     <div style="display: flex; justify-content: space-between; align-items: center; width: 100%;">
                         <h3 style="margin: 0;">Posizioni Aperte</h3>
                         <button id="export-portfolio-csv-btn" class="header-btn secondary" style="font-size: 0.85rem;" title="Esporta ticker delle posizioni aperte in formato CSV">Export CSV</button>
@@ -987,7 +987,7 @@
 
             <!-- Transactions History -->
             <div id="portfolio-history-container" class="card" style="display: none;">
-                <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
+                <div class="collapsible-header" onclick="if (event.target.closest('select, button, input, a, label')) return; this.parentElement.classList.toggle('collapsed')">
                     <h3 style="margin: 0;">Storico Transazioni</h3>
                 </div>
                 <div class="collapsible-body">
