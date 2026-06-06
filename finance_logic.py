@@ -1301,18 +1301,28 @@ class FinanceLogic:
 
         # Collect realized events for fiscal backpack computation
         realized_events = []  # (date, year, amount, type, tax_plan_id, tx_obj)
-        # type: 'sell_gain', 'sell_loss', 'cover_gain', 'cover_loss', 'dividend'
+        # type: 'sell_gain', 'sell_loss', 'cover_gain', 'cover_loss', 'dividend', 'coupon_erode'
 
         positions = {}
         for t in transactions:
-            if t.type in ["DEPOSIT", "WITHDRAWAL", "DIVIDEND"]:
+            if t.type in ["DEPOSIT", "WITHDRAWAL", "DIVIDEND", "COUPON"]:
                 if t.type == "DIVIDEND":
                     tx_year = t.date.year if t.date else datetime.now().year
                     shares = abs(t.quantity)
                     gross_base = t.price * shares * t.exchange_rate
                     realized_events.append((t.date, tx_year, gross_base, 'dividend', t.dividend_tax_plan_id, t))
+                elif t.type == "COUPON":
+                    tx_year = t.date.year if t.date else datetime.now().year
+                    shares = abs(t.quantity)
+                    gross_base = t.price * shares * t.exchange_rate
+                    if t.instrument_type in ("CERTIFICATE", "ETC", "ETN"):
+                        # Erode broker's fiscal backpack (no tax)
+                        realized_events.append((t.date, tx_year, -gross_base, 'coupon_erode', None, t))
+                    elif t.instrument_type == "BOND":
+                        # Apply coupon tax plan (no backpack interaction)
+                        realized_events.append((t.date, tx_year, gross_base, 'coupon_bond', t.coupon_tax_plan_id, t))
                 continue
-                
+
             sym = t.ticker
             if sym not in positions:
                 positions[sym] = {
@@ -1400,6 +1410,8 @@ class FinanceLogic:
         current_year = datetime.now().year
         total_cg_tax = 0.0
         total_dividend_tax_from_plan = 0.0
+        total_coupon_tax_from_plan = 0.0
+        total_coupons_eroded_backpack = 0.0
         total_tobin_tax = sum(t.tobin_tax_paid or 0.0 for t in transactions)
 
         # Reset per-transaction CG tax before recomputing
@@ -1460,6 +1472,22 @@ class FinanceLogic:
                     if tax_plan and tax_plan.rate > 0:
                         tax_amount = amount * (tax_plan.rate / 100.0)
                         total_dividend_tax_from_plan += tax_amount
+            elif etype == 'coupon_erode':
+                # Coupon from CERT/ETC/ETN: consume losses from broker's backpack.
+                # amount is negative (signal); use absolute value to erode.
+                gross = abs(amount)
+                remaining = offset_broker_backpack(broker_id, gross)
+                # `gross - remaining` is what was actually eroded
+                eroded = gross - remaining
+                if eroded > 0.001:
+                    total_coupons_eroded_backpack += eroded
+            elif etype == 'coupon_bond':
+                # Coupon from BOND: apply coupon tax plan, no backpack interaction
+                if tax_plan_id:
+                    tax_plan = db.query(TaxPlan).filter(TaxPlan.id == tax_plan_id).first()
+                    if tax_plan and tax_plan.rate > 0:
+                        tax_amount = amount * (tax_plan.rate / 100.0)
+                        total_coupon_tax_from_plan += tax_amount
             else:
                 # Gain: offset against this broker's backpack first
                 remaining = offset_broker_backpack(broker_id, amount)
@@ -1523,6 +1551,22 @@ class FinanceLogic:
                     total_net_dividends += (gross_base - tax_base)
                 else:
                     total_net_dividends -= (gross_base + tax_base)
+
+        # Coupon aggregates (in base currency)
+        total_gross_coupons = 0.0
+        total_coupon_tax = 0.0
+        total_net_coupons = 0.0
+        for _t in transactions:
+            if _t.type == "COUPON":
+                shares = abs(_t.quantity)
+                gross_base = _t.price * shares * _t.exchange_rate
+                if _t.instrument_type == "BOND":
+                    tax_base = gross_base * ((_t.tax_rate or 0.0) / 100.0)
+                else:
+                    tax_base = 0.0
+                total_gross_coupons += gross_base
+                total_coupon_tax += tax_base
+                total_net_coupons += (gross_base - tax_base)
 
         # Aggregate Tobin tax per ticker
         tobin_tax_by_ticker = {}
@@ -1635,6 +1679,11 @@ class FinanceLogic:
                 "total_tobin_tax_paid": total_tobin_tax,
                 "total_capital_gains_tax": total_cg_tax,
                 "total_dividend_tax_from_plans": total_dividend_tax_from_plan,
+                "total_coupon_tax_from_plans": total_coupon_tax_from_plan,
+                "total_gross_coupons": total_gross_coupons,
+                "total_coupon_tax": total_coupon_tax,
+                "total_net_coupons": total_net_coupons,
+                "total_coupons_eroded_backpack": total_coupons_eroded_backpack,
                 "total_tax_paid": total_tobin_tax + total_cg_tax + total_dividend_tax,
                 "after_tax_realized_pl": after_tax_realized_pl,
                 "fiscal_backpack_by_broker": backpack_by_broker,

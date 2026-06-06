@@ -353,7 +353,7 @@ class CommissionPlan(CommissionPlanBase):
 
 class TaxPlanBase(BaseModel):
     name: str
-    type: str  # 'tobin', 'capital_gains', 'dividend'
+    type: str  # 'tobin', 'capital_gains', 'dividend', 'coupon'
     rate: float = 0.0
     currency: str = "EUR"
 
@@ -373,6 +373,12 @@ class FiscalBackpackEntryOut(BaseModel):
     class Config:
         from_attributes = True
 
+
+class FiscalBackpackEntryUpsert(BaseModel):
+    loss_year: int
+    remaining_loss: float
+
+
 class BrokerBase(BaseModel):
     name: str
 
@@ -384,6 +390,10 @@ class Broker(BrokerBase):
 
     class Config:
         from_attributes = True
+
+
+class BrokerWithBackpack(Broker):
+    fiscal_backpack_total: float = 0.0
 
 
 class TransactionBase(BaseModel):
@@ -405,6 +415,8 @@ class TransactionBase(BaseModel):
     capital_gains_tax_plan_id: Optional[int] = None
     capital_gains_tax_paid: float = 0.0
     dividend_tax_plan_id: Optional[int] = None
+    coupon_tax_plan_id: Optional[int] = None
+    instrument_type: Optional[str] = "STOCK"  # STOCK, BOND, CERTIFICATE, ETC, ETN
     note: Optional[str] = None
 
 class TransactionCreate(TransactionBase):

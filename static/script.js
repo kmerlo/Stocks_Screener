@@ -7992,7 +7992,7 @@ function renderTaxPlansTable() {
     });
     const label = document.getElementById('tax-active-type-label');
     if (label) {
-        const names = { tobin: 'Tobin Tax', capital_gains: 'Capital Gains', dividend: 'Dividendi' };
+        const names = { tobin: 'Tobin Tax', capital_gains: 'Capital Gains', dividend: 'Dividendi', coupon: 'Cedole' };
         label.innerHTML = `Tipo attivo: <strong>${names[activeTaxType] || activeTaxType}</strong>`;
     }
 }
@@ -8062,6 +8062,20 @@ async function loadTaxPlanDropdowns() {
             opt.value = plan.id;
             opt.textContent = `${plan.name} [${plan.rate}%]`;
             divSelect.appendChild(opt);
+        });
+    }
+
+    // Coupon tax plan dropdown in coupon modal
+    const cpnPlans = await loadTaxPlans('coupon');
+    const cpnSelect = document.getElementById('cpn-tax-plan');
+    if (cpnSelect) {
+        cpnSelect.innerHTML = '<option value="">Seleziona piano...</option>';
+        cpnPlans.forEach(plan => {
+            const opt = document.createElement('option');
+            opt.value = plan.id;
+            opt.textContent = `${plan.name} [${plan.rate}%]`;
+            opt.dataset.rate = plan.rate;
+            cpnSelect.appendChild(opt);
         });
     }
 }
@@ -8162,11 +8176,16 @@ async function loadAndRenderBrokers() {
     if (!tbody) return;
     tbody.innerHTML = '';
     currentBrokers.forEach(b => {
+        const total = b.fiscal_backpack_total ?? 0;
         const tr = document.createElement('tr');
-        tr.style.borderBottom = '1px solid var(--border-color)';
+        tr.style.borderBottom = '1px solid var(--border-color);';
         tr.innerHTML = `
             <td style="padding: 6px;">${b.name}</td>
+            <td style="text-align: right; padding: 6px; color: ${total > 0 ? '#ff8a65' : 'var(--text-secondary)'}; font-weight: ${total > 0 ? '600' : 'normal'};">
+                ${total > 0 ? total.toFixed(2) : '—'}
+            </td>
             <td style="text-align: center; padding: 6px;">
+                <button class="header-btn small" style="margin-right: 4px;" onclick="openBackpackManageModalForBroker(${b.id})">Zainetto</button>
                 <button class="header-btn danger small" onclick="deleteBroker(${b.id})">Elimina</button>
             </td>
         `;
@@ -8219,6 +8238,163 @@ if (document.getElementById('add-broker-btn')) {
             alert("Errore nella richiesta: " + err.message);
         }
     };
+}
+
+// --- Fiscal Backpack Management ---
+
+function _bpManageYears() {
+    const currentYear = new Date().getFullYear();
+    // Most recent first (current, -1, -2, -3, -4)
+    return [0, -1, -2, -3, -4].map(off => currentYear + off);
+}
+
+async function _bpPopulateBrokerDropdown(selectedId) {
+    const sel = document.getElementById('bp-manage-broker');
+    if (!sel) return;
+    if (!currentBrokers || currentBrokers.length === 0) {
+        await loadBrokersList();
+    }
+    sel.innerHTML = '';
+    currentBrokers.forEach(b => {
+        const opt = document.createElement('option');
+        opt.value = b.id;
+        opt.textContent = b.name;
+        sel.appendChild(opt);
+    });
+    if (selectedId) {
+        sel.value = String(selectedId);
+    }
+}
+
+async function openBackpackManageModal() {
+    await _bpPopulateBrokerDropdown();
+    _bpRenderYearInputs();
+    document.getElementById('bp-manage-status').textContent = '';
+    document.getElementById('backpack-manage-modal').classList.remove('hidden');
+}
+window.openBackpackManageModal = openBackpackManageModal;
+
+async function openBackpackManageModalForBroker(brokerId) {
+    document.getElementById('broker-modal').classList.add('hidden');
+    await openBackpackManageModal();
+    const sel = document.getElementById('bp-manage-broker');
+    if (sel) {
+        sel.value = String(brokerId);
+        _bpRenderYearInputs();
+    }
+}
+window.openBackpackManageModalForBroker = openBackpackManageModalForBroker;
+
+function closeBackpackManageModal() {
+    document.getElementById('backpack-manage-modal').classList.add('hidden');
+}
+window.closeBackpackManageModal = closeBackpackManageModal;
+
+function _bpRenderYearInputs() {
+    const container = document.getElementById('bp-manage-years');
+    const brokerId = document.getElementById('bp-manage-broker')?.value;
+    if (!container || !brokerId) return;
+    container.innerHTML = '';
+    const years = _bpManageYears();
+    fetch(`/brokers/${brokerId}/fiscal_backpack`)
+        .then(r => r.json())
+        .then(entries => {
+            const map = {};
+            (entries || []).forEach(e => { map[e.loss_year] = e.remaining_loss; });
+            years.forEach(y => {
+                const row = document.createElement('div');
+                row.className = 'modal-form-row';
+                row.innerHTML = `
+                    <label style="min-width: 110px;">Anno ${y}:</label>
+                    <input type="number" step="0.01" min="0" data-year="${y}" class="bp-year-input"
+                        value="${map[y] !== undefined ? map[y] : 0}"
+                        style="flex: 1; text-align: right;">
+                `;
+                container.appendChild(row);
+            });
+        })
+        .catch(err => {
+            container.innerHTML = `<div style="color: var(--down-color); font-size: 0.85rem;">Errore caricamento: ${err.message}</div>`;
+        });
+}
+
+async function saveBrokerBackpack() {
+    const brokerId = document.getElementById('bp-manage-broker')?.value;
+    const status = document.getElementById('bp-manage-status');
+    if (!brokerId) {
+        status.textContent = 'Seleziona un broker';
+        status.style.color = 'var(--down-color)';
+        return;
+    }
+    const inputs = document.querySelectorAll('.bp-year-input');
+    const payload = [];
+    inputs.forEach(inp => {
+        const v = parseFloat(inp.value);
+        payload.push({
+            loss_year: parseInt(inp.dataset.year, 10),
+            remaining_loss: isNaN(v) ? 0 : v
+        });
+    });
+    status.textContent = 'Salvataggio...';
+    status.style.color = 'var(--text-secondary)';
+    try {
+        const resp = await fetch(`/brokers/${brokerId}/fiscal_backpack/upsert`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${resp.status}`);
+        }
+        status.textContent = '✓ Salvato';
+        status.style.color = 'var(--up-color)';
+        // Refresh broker list (total column) and any open portfolio summary
+        await loadAndRenderBrokers();
+        if (typeof currentPortfolioId !== 'undefined' && currentPortfolioId) {
+            // Trigger a reload of the current portfolio summary if available
+            const sel = document.getElementById('portfolio-select');
+            if (sel && sel.value) {
+                const evt = new Event('change');
+                sel.dispatchEvent(evt);
+            }
+        }
+    } catch (err) {
+        status.textContent = 'Errore: ' + err.message;
+        status.style.color = 'var(--down-color)';
+    }
+}
+window.saveBrokerBackpack = saveBrokerBackpack;
+
+async function resetBrokerBackpack() {
+    const brokerId = document.getElementById('bp-manage-broker')?.value;
+    const status = document.getElementById('bp-manage-status');
+    if (!brokerId) {
+        status.textContent = 'Seleziona un broker';
+        status.style.color = 'var(--down-color)';
+        return;
+    }
+    if (!confirm('Eliminare TUTTE le voci zainetto fiscale per questo broker? (incluse eventuali voci calcolate automaticamente)')) return;
+    try {
+        const resp = await fetch(`/brokers/${brokerId}/fiscal_backpack`, { method: 'PUT' });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        status.textContent = '✓ Reset completato';
+        status.style.color = 'var(--up-color)';
+        _bpRenderYearInputs();
+        await loadAndRenderBrokers();
+    } catch (err) {
+        status.textContent = 'Errore: ' + err.message;
+        status.style.color = 'var(--down-color)';
+    }
+}
+window.resetBrokerBackpack = resetBrokerBackpack;
+
+if (document.getElementById('manage-backpacks-btn')) {
+    document.getElementById('manage-backpacks-btn').onclick = () => openBackpackManageModal();
+}
+
+if (document.getElementById('bp-manage-broker')) {
+    document.getElementById('bp-manage-broker').addEventListener('change', _bpRenderYearInputs);
 }
 
 // Global auto-refresh timer (works across Portfolio / Grafico / Screening views)
@@ -8425,25 +8601,71 @@ function renderPortfolioSummary(data) {
         divEl.textContent = `${netDiv.toFixed(2)} ${curr}`;
         divEl.style.color = netDiv >= 0 ? '#fbc02d' : '#e57373';
     }
+    const divTax = summary.total_dividend_tax ?? 0;
+    const divDetail = document.getElementById('portfolio-dividends-detail');
+    if (divDetail) {
+        const parts = [];
+        if (divTax > 0) parts.push(`Tasse: ${divTax.toFixed(2)}`);
+        divDetail.textContent = parts.length > 0 ? parts.join(' | ') : '—';
+    }
+
+    // Coupons
+    const netCpn = summary.total_net_coupons ?? 0;
+    const cpnTax = summary.total_coupon_tax ?? 0;
+    const cpnEroded = summary.total_coupons_eroded_backpack ?? 0;
+    const cpnEl = document.getElementById('portfolio-coupons-display');
+    if (cpnEl) {
+        cpnEl.textContent = `${netCpn.toFixed(2)} ${curr}`;
+        cpnEl.style.color = netCpn >= 0 ? '#9c27b0' : '#e57373';
+    }
+    const cpnDetail = document.getElementById('portfolio-coupons-detail');
+    if (cpnDetail) {
+        const parts = [];
+        if (cpnTax > 0) parts.push(`Tasse: ${cpnTax.toFixed(2)}`);
+        if (cpnEroded > 0) parts.push(`Erode zainetto: ${cpnEroded.toFixed(2)}`);
+        cpnDetail.textContent = parts.length > 0 ? parts.join(' | ') : '—';
+    }
 
     // Fiscal Backpack (per broker)
-    const bpByBroker = summary.fiscal_backpack_by_broker || [];
+    const bpByBroker = (summary.fiscal_backpack_by_broker || [])
+        .filter(b => (b.total_remaining || 0) > 0.001);
     const bpTotal = summary.fiscal_backpack_total ?? 0;
     const bpEl = document.getElementById('portfolio-backpack-display');
     if (bpEl) {
         bpEl.textContent = `${bpTotal.toFixed(2)} ${curr}`;
         bpEl.style.color = bpTotal > 0 ? '#ff8a65' : 'var(--text-secondary)';
     }
-    const bpDetail = document.getElementById('portfolio-backpack-detail');
-    if (bpDetail) {
+    const bpList = document.getElementById('portfolio-backpack-list');
+    const bpMore = document.getElementById('portfolio-backpack-more');
+    if (bpList) {
+        bpList.innerHTML = '';
         if (bpByBroker.length > 0) {
-            bpDetail.textContent = bpByBroker.map(b =>
-                `${b.broker_name}: ${b.by_year.map(e => `${e.loss_year}: ${e.remaining_loss.toFixed(2)}`).join(', ')}`
-            ).join(' | ');
+            const sorted = [...bpByBroker].sort((a, b) => b.total_remaining - a.total_remaining);
+            const top = sorted.slice(0, 3);
+            top.forEach(b => {
+                const yearsStr = b.by_year
+                    .map(e => `${e.loss_year}: ${e.remaining_loss.toFixed(0)}`)
+                    .join(', ');
+                const row = document.createElement('div');
+                row.className = 'backpack-mini-row';
+                row.innerHTML = `<span class="backpack-mini-name">${b.broker_name}</span>` +
+                                `<span class="backpack-mini-amount">${b.total_remaining.toFixed(2)}</span>`;
+                if (yearsStr) {
+                    const sub = document.createElement('div');
+                    sub.className = 'backpack-mini-years';
+                    sub.textContent = yearsStr;
+                    row.appendChild(sub);
+                }
+                bpList.appendChild(row);
+            });
         } else {
-            bpDetail.textContent = 'Nessuna perdita residua';
+            bpList.textContent = 'Nessuna perdita residua';
         }
     }
+    if (bpMore) {
+        bpMore.style.display = bpByBroker.length > 3 ? 'inline' : 'none';
+    }
+    _lastBackpackData = { bpByBroker, bpTotal, curr };
 
     // Tax info
     const totalTax = summary.total_tax_paid ?? 0;
@@ -8952,6 +9174,51 @@ function openMultiNoteModal(ticker, notes) {
 }
 window.openMultiNoteModal = openMultiNoteModal;
 
+let _lastBackpackData = null;
+
+function openBackpackModal() {
+    const data = _lastBackpackData;
+    if (!data) return;
+    const { bpByBroker, bpTotal, curr } = data;
+    const sorted = [...bpByBroker].sort((a, b) => b.total_remaining - a.total_remaining);
+
+    const summaryEl = document.getElementById('backpack-modal-summary');
+    if (summaryEl) {
+        summaryEl.innerHTML = `Totale: <strong style="color: #ff8a65;">${bpTotal.toFixed(2)} ${curr}</strong> &nbsp;·&nbsp; ${sorted.length} broker con perdite residue`;
+    }
+    const listEl = document.getElementById('backpack-modal-list');
+    if (listEl) {
+        listEl.innerHTML = '';
+        sorted.forEach(b => {
+            const wrap = document.createElement('div');
+            wrap.className = 'backpack-modal-broker';
+            const head = document.createElement('div');
+            head.className = 'backpack-modal-head';
+            head.innerHTML = `<span>${b.broker_name}</span><span style="color: #ff8a65; font-weight: bold;">${b.total_remaining.toFixed(2)} ${curr}</span>`;
+            wrap.appendChild(head);
+            if (b.by_year && b.by_year.length > 0) {
+                const sub = document.createElement('div');
+                sub.className = 'backpack-modal-years';
+                b.by_year.forEach(e => {
+                    const chip = document.createElement('span');
+                    chip.className = 'backpack-year-chip';
+                    chip.textContent = `${e.loss_year}: ${e.remaining_loss.toFixed(2)} ${curr}`;
+                    sub.appendChild(chip);
+                });
+                wrap.appendChild(sub);
+            }
+            listEl.appendChild(wrap);
+        });
+    }
+    document.getElementById('backpack-modal').classList.remove('hidden');
+}
+window.openBackpackModal = openBackpackModal;
+
+function closeBackpackModal() {
+    document.getElementById('backpack-modal').classList.add('hidden');
+}
+window.closeBackpackModal = closeBackpackModal;
+
 function closePositionModal(ticker, quantity, currentPrice) {
     editingTransactionId = null;
     const titleEl = document.getElementById('transaction-modal-title');
@@ -8986,7 +9253,7 @@ function closePositionModal(ticker, quantity, currentPrice) {
 }
 window.closePositionModal = closePositionModal;
 
-function openEditTransactionModal(id) {
+async function openEditTransactionModal(id) {
     const t = currentTransactions.find(item => item.id === id);
     if (!t) return;
     
@@ -9023,6 +9290,49 @@ function openEditTransactionModal(id) {
         }
         recomputeDividendCalc();
         document.getElementById('dividend-modal').classList.remove('hidden');
+        return;
+    }
+
+    // Check if it is a coupon
+    if (t.type === 'COUPON') {
+        couponEditingId = id;
+        const titleEl = document.getElementById('coupon-modal-title');
+        if (titleEl) titleEl.textContent = `Modifica Cedola — ${t.ticker}`;
+
+        // Populate broker dropdown
+        const cpnBroker = document.getElementById('cpn-broker');
+        if (cpnBroker) {
+            cpnBroker.innerHTML = '<option value="">Seleziona broker...</option>';
+            currentBrokers.forEach(b => {
+                const opt = document.createElement('option');
+                opt.value = b.id;
+                opt.textContent = b.name;
+                cpnBroker.appendChild(opt);
+            });
+            cpnBroker.value = t.broker_id || '';
+        }
+        // Ensure coupon tax plans are loaded, then set value
+        await loadTaxPlanDropdowns();
+        const cpnTaxPlan = document.getElementById('cpn-tax-plan');
+        if (cpnTaxPlan) cpnTaxPlan.value = t.coupon_tax_plan_id || '';
+
+        const instrumentType = t.instrument_type || 'BOND';
+        document.getElementById('cpn-instrument-type').value = instrumentType;
+        document.getElementById('cpn-ticker').value = t.ticker || '';
+        const date = new Date(t.date);
+        date.setMinutes(date.getMinutes() - date.getTimezoneOffset());
+        const val = date.toISOString().slice(0, 16);
+        const cpnDateEl = document.getElementById('cpn-date');
+        if (cpnDateEl) cpnDateEl.value = val;
+        document.getElementById('cpn-currency').value = t.instrument_currency || 'EUR';
+        document.getElementById('cpn-fx').value = (t.exchange_rate || 1.0).toFixed(6);
+        document.getElementById('cpn-total').value = Math.abs(t.price * t.quantity).toFixed(2);
+        document.getElementById('cpn-tax-rate').value = t.tax_rate || 12.5;
+        document.getElementById('cpn-note').value = t.note || '';
+
+        updateCouponInstrumentTypeUI();
+        recomputeCouponCalc();
+        document.getElementById('coupon-modal').classList.remove('hidden');
         return;
     }
     
@@ -9380,6 +9690,9 @@ if (document.getElementById('save-cash-btn')) {
 // === Dividend Modal ===
 let dividendEditingId = null;
 
+// === Coupon Modal ===
+let couponEditingId = null;
+
 function getDividendMode() {
     const el = document.querySelector('input[name="div-mode"]:checked');
     return el ? el.value : 'total';
@@ -9637,6 +9950,200 @@ if (document.getElementById('save-dividend-btn')) {
             });
             if (response.ok) {
                 document.getElementById('dividend-modal').classList.add('hidden');
+                refreshPortfolio();
+            } else {
+                const err = await response.json();
+                alert("Errore: " + JSON.stringify(err.detail));
+            }
+        } catch (err) {
+            alert("Errore nella richiesta: " + err.message);
+        }
+    };
+}
+
+// --- Coupon (Cedola) Functions ---
+
+function recomputeCouponCalc() {
+    const total = parseFloat(document.getElementById('cpn-total')?.value) || 0;
+    const fx = parseFloat(document.getElementById('cpn-fx')?.value) || 1.0;
+    const instrumentType = document.getElementById('cpn-instrument-type')?.value || 'BOND';
+    const grossBase = total * fx;
+    let taxBase = 0;
+    if (instrumentType === 'BOND') {
+        const taxRate = parseFloat(document.getElementById('cpn-tax-rate')?.value) || 0;
+        taxBase = grossBase * (taxRate / 100.0);
+    }
+    const netBase = grossBase - taxBase;
+    const g = document.getElementById('cpn-gross-base');
+    const t = document.getElementById('cpn-tax-base');
+    const n = document.getElementById('cpn-net-base');
+    if (g) g.textContent = grossBase.toFixed(2);
+    if (t) t.textContent = taxBase.toFixed(2);
+    if (n) {
+        n.textContent = netBase.toFixed(2);
+        n.style.color = netBase >= 0 ? '#66bb6a' : '#e57373';
+    }
+}
+
+function updateCouponInstrumentTypeUI() {
+    const t = document.getElementById('cpn-instrument-type')?.value || 'BOND';
+    const bondSection = document.getElementById('cpn-bond-section');
+    const eraseSection = document.getElementById('cpn-erase-section');
+    if (bondSection) bondSection.style.display = t === 'BOND' ? 'flex' : 'none';
+    if (eraseSection) eraseSection.style.display = t === 'BOND' ? 'none' : 'block';
+    recomputeCouponCalc();
+}
+
+function resetCouponModal() {
+    document.getElementById('cpn-instrument-type').value = 'BOND';
+    document.getElementById('cpn-ticker').value = '';
+    const now = new Date();
+    now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+    const val = now.toISOString().slice(0, 16);
+    const dateEl = document.getElementById('cpn-date');
+    if (dateEl) dateEl.value = val;
+    document.getElementById('cpn-currency').value = activePortfolioBaseCurrency || 'EUR';
+    document.getElementById('cpn-fx').value = '1.000000';
+    document.getElementById('cpn-total').value = '';
+    document.getElementById('cpn-tax-plan').value = '';
+    document.getElementById('cpn-tax-rate').value = '12.5';
+    document.getElementById('cpn-note').value = '';
+    updateCouponInstrumentTypeUI();
+    recomputeCouponCalc();
+}
+
+async function openCouponModal() {
+    if (!activePortfolioId) return;
+    document.getElementById('coupon-modal-title').textContent = 'Aggiungi Cedola';
+    couponEditingId = null;
+    // Populate broker dropdown
+    const cpnBroker = document.getElementById('cpn-broker');
+    if (cpnBroker) {
+        cpnBroker.innerHTML = '<option value="">Seleziona broker...</option>';
+        currentBrokers.forEach(b => {
+            const opt = document.createElement('option');
+            opt.value = b.id;
+            opt.textContent = b.name;
+            cpnBroker.appendChild(opt);
+        });
+    }
+    await loadTaxPlanDropdowns();
+    resetCouponModal();
+    document.getElementById('coupon-modal').classList.remove('hidden');
+}
+window.openCouponModal = openCouponModal;
+window._resetCouponEditingId = () => { couponEditingId = null; };
+
+async function updateCouponExchangeRate() {
+    if (!activePortfolioId) return;
+    const baseCurrency = activePortfolioBaseCurrency || 'EUR';
+    const instrumentCurrency = document.getElementById('cpn-currency').value;
+    const dateVal = document.getElementById('cpn-date').value;
+    if (instrumentCurrency === baseCurrency) {
+        document.getElementById('cpn-fx').value = '1.000000';
+        recomputeCouponCalc();
+        return;
+    }
+    if (!dateVal) return;
+    try {
+        const response = await fetch(`/fx_rate?base_currency=${baseCurrency}&instrument_currency=${instrumentCurrency}&date=${dateVal}`);
+        if (response.ok) {
+            const data = await response.json();
+            if (data.rate) {
+                document.getElementById('cpn-fx').value = data.rate.toFixed(6);
+                recomputeCouponCalc();
+            }
+        }
+    } catch (err) {
+        console.error("Error fetching FX rate (coupon):", err);
+    }
+}
+window.updateCouponExchangeRate = updateCouponExchangeRate;
+
+if (document.getElementById('add-coupon-btn')) {
+    document.getElementById('add-coupon-btn').onclick = () => openCouponModal();
+}
+
+const cpnInstrumentTypeEl = document.getElementById('cpn-instrument-type');
+if (cpnInstrumentTypeEl) cpnInstrumentTypeEl.addEventListener('change', updateCouponInstrumentTypeUI);
+
+['cpn-total', 'cpn-fx', 'cpn-tax-rate'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.addEventListener('input', recomputeCouponCalc);
+});
+
+const cpnTaxPlanEl = document.getElementById('cpn-tax-plan');
+if (cpnTaxPlanEl) {
+    cpnTaxPlanEl.addEventListener('change', (e) => {
+        const planId = e.target.value;
+        if (planId) {
+            const plan = taxPlans.find(p => p.id === parseInt(planId, 10));
+            if (plan) {
+                document.getElementById('cpn-tax-rate').value = plan.rate;
+                recomputeCouponCalc();
+            }
+        }
+    });
+}
+
+const cpnCurrencyEl = document.getElementById('cpn-currency');
+if (cpnCurrencyEl) cpnCurrencyEl.addEventListener('change', updateCouponExchangeRate);
+
+const cpnDateEl = document.getElementById('cpn-date');
+if (cpnDateEl) cpnDateEl.addEventListener('change', updateCouponExchangeRate);
+
+if (document.getElementById('save-coupon-btn')) {
+    document.getElementById('save-coupon-btn').onclick = async () => {
+        if (!activePortfolioId) return;
+        const ticker = document.getElementById('cpn-ticker').value.trim().toUpperCase();
+        if (!ticker) return alert("Inserisci il ticker.");
+        const total = parseFloat(document.getElementById('cpn-total').value) || 0;
+        if (total <= 0) return alert("Inserisci un importo totale positivo.");
+        const instrumentType = document.getElementById('cpn-instrument-type').value;
+        const date = document.getElementById('cpn-date').value;
+        const instrument_currency = document.getElementById('cpn-currency').value;
+        const exchange_rate = parseFloat(document.getElementById('cpn-fx').value) || 1.0;
+        const tax_rate = instrumentType === 'BOND'
+            ? (parseFloat(document.getElementById('cpn-tax-rate').value) || 0)
+            : 0;
+        const coupon_tax_plan_id = instrumentType === 'BOND'
+            ? (document.getElementById('cpn-tax-plan').value || null)
+            : null;
+        const broker_id = document.getElementById('cpn-broker')?.value || null;
+        if (!broker_id) return alert("Seleziona un broker per la cedola");
+        const note = document.getElementById('cpn-note').value || '';
+
+        try {
+            const url = couponEditingId
+                ? `/transactions/${couponEditingId}`
+                : `/portfolios/${activePortfolioId}/transactions/`;
+            const method = couponEditingId ? 'PUT' : 'POST';
+            const response = await fetch(url, {
+                method,
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    portfolio_id: parseInt(activePortfolioId),
+                    broker_id: parseInt(broker_id),
+                    ticker,
+                    type: 'COUPON',
+                    date,
+                    quantity: 1,
+                    price: total,
+                    instrument_currency,
+                    exchange_rate,
+                    commission_plan_id: null,
+                    commission_paid: 0.0,
+                    short_borrow_fee_rate: 0.0,
+                    tax_rate,
+                    dividend_tax_plan_id: null,
+                    coupon_tax_plan_id: coupon_tax_plan_id ? parseInt(coupon_tax_plan_id) : null,
+                    instrument_type: instrumentType,
+                    note
+                })
+            });
+            if (response.ok) {
+                document.getElementById('coupon-modal').classList.add('hidden');
+                couponEditingId = null;
                 refreshPortfolio();
             } else {
                 const err = await response.json();

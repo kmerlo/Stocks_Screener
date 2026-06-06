@@ -266,6 +266,7 @@ class TaxPlan(Base):
     transactions_tobin = relationship("Transaction", back_populates="tobin_tax_plan", foreign_keys="Transaction.tobin_tax_plan_id")
     transactions_cg = relationship("Transaction", back_populates="capital_gains_tax_plan", foreign_keys="Transaction.capital_gains_tax_plan_id")
     transactions_dividend = relationship("Transaction", back_populates="dividend_tax_plan", foreign_keys="Transaction.dividend_tax_plan_id")
+    transactions_coupon = relationship("Transaction", back_populates="coupon_tax_plan", foreign_keys="Transaction.coupon_tax_plan_id")
 
 
 class FiscalBackpackEntry(Base):
@@ -301,6 +302,8 @@ class Transaction(Base):
     capital_gains_tax_plan_id = Column(Integer, ForeignKey("tax_plans.id"), nullable=True)
     capital_gains_tax_paid = Column(Float, default=0.0)
     dividend_tax_plan_id = Column(Integer, ForeignKey("tax_plans.id"), nullable=True)
+    coupon_tax_plan_id = Column(Integer, ForeignKey("tax_plans.id"), nullable=True)
+    instrument_type = Column(String, default="STOCK")  # STOCK, BOND, CERTIFICATE, ETC, ETN
     note = Column(Text, default="")
 
     portfolio = relationship("Portfolio", back_populates="transactions")
@@ -309,6 +312,7 @@ class Transaction(Base):
     tobin_tax_plan = relationship("TaxPlan", back_populates="transactions_tobin", foreign_keys=[tobin_tax_plan_id])
     capital_gains_tax_plan = relationship("TaxPlan", back_populates="transactions_cg", foreign_keys=[capital_gains_tax_plan_id])
     dividend_tax_plan = relationship("TaxPlan", back_populates="transactions_dividend", foreign_keys=[dividend_tax_plan_id])
+    coupon_tax_plan = relationship("TaxPlan", back_populates="transactions_coupon", foreign_keys=[coupon_tax_plan_id])
 
 def init_db():
     Base.metadata.create_all(bind=engine)
@@ -368,6 +372,22 @@ def init_db():
     try:
         conn = engine.connect()
         conn.execute(text("ALTER TABLE transactions ADD COLUMN dividend_tax_plan_id INTEGER REFERENCES tax_plans(id)"))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+    # Migration: add coupon_tax_plan_id column
+    try:
+        conn = engine.connect()
+        conn.execute(text("ALTER TABLE transactions ADD COLUMN coupon_tax_plan_id INTEGER REFERENCES tax_plans(id)"))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+    # Migration: add instrument_type column
+    try:
+        conn = engine.connect()
+        conn.execute(text("ALTER TABLE transactions ADD COLUMN instrument_type VARCHAR DEFAULT 'STOCK'"))
         conn.commit()
         conn.close()
     except Exception:

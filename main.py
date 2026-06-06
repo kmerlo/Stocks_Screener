@@ -1032,9 +1032,23 @@ def delete_tax_plan(plan_id: int, db: Session = Depends(get_db)):
 
 # --- Broker Endpoints ---
 
-@app.get("/brokers/", response_model=List[schemas.Broker])
+@app.get("/brokers/", response_model=List[schemas.BrokerWithBackpack])
 def get_brokers(db: Session = Depends(get_db)):
-    return db.query(db_mod.Broker).order_by(db_mod.Broker.name.asc()).all()
+    brokers = db.query(db_mod.Broker).order_by(db_mod.Broker.name.asc()).all()
+    current_year = datetime.now().year
+    out = []
+    for b in brokers:
+        total = db.query(db_mod.FiscalBackpackEntry).filter(
+            db_mod.FiscalBackpackEntry.broker_id == b.id,
+            db_mod.FiscalBackpackEntry.loss_year >= current_year - 4,
+            db_mod.FiscalBackpackEntry.loss_year <= current_year
+        ).with_entities(db_mod.FiscalBackpackEntry.remaining_loss).all()
+        out.append(schemas.BrokerWithBackpack(
+            id=b.id,
+            name=b.name,
+            fiscal_backpack_total=sum(t[0] for t in total if t[0] and t[0] > 0.001)
+        ))
+    return out
 
 @app.post("/brokers/", response_model=schemas.Broker)
 def create_broker(broker: schemas.BrokerCreate, db: Session = Depends(get_db)):
@@ -1074,6 +1088,44 @@ def reset_fiscal_backpack(broker_id: int, db: Session = Depends(get_db)):
     ).delete()
     db.commit()
     return {"message": "Fiscal backpack reset"}
+
+@app.post("/brokers/{broker_id}/fiscal_backpack/upsert")
+def upsert_fiscal_backpack(
+    broker_id: int,
+    payload: List[schemas.FiscalBackpackEntryUpsert],
+    db: Session = Depends(get_db)
+):
+    """Upsert (insert or update) di voci zainetto fiscale per un broker.
+
+    Le entry con remaining_loss < 0.001 vengono mantenute a 0 (riga non eliminata).
+    Gli anni non inclusi nel payload non vengono toccati.
+    """
+    broker = db.query(db_mod.Broker).filter(db_mod.Broker.id == broker_id).first()
+    if not broker:
+        raise HTTPException(status_code=404, detail="Broker not found")
+    current_year = datetime.now().year
+    min_year = current_year - 4
+    for item in payload:
+        if item.loss_year < min_year or item.loss_year > current_year:
+            raise HTTPException(
+                status_code=400,
+                detail=f"loss_year {item.loss_year} fuori range ammesso ({min_year}..{current_year})"
+            )
+        value = max(0.0, float(item.remaining_loss))
+        existing = db.query(db_mod.FiscalBackpackEntry).filter(
+            db_mod.FiscalBackpackEntry.broker_id == broker_id,
+            db_mod.FiscalBackpackEntry.loss_year == item.loss_year
+        ).first()
+        if existing:
+            existing.remaining_loss = value
+        else:
+            db.add(db_mod.FiscalBackpackEntry(
+                broker_id=broker_id,
+                loss_year=item.loss_year,
+                remaining_loss=value
+            ))
+    db.commit()
+    return {"message": "Fiscal backpack updated", "count": len(payload)}
 
 @app.get("/portfolios/{portfolio_id}/transactions/", response_model=List[schemas.Transaction])
 def get_transactions(portfolio_id: int, db: Session = Depends(get_db)):
@@ -1139,6 +1191,24 @@ def create_transaction(portfolio_id: int, transaction: schemas.TransactionCreate
         if tax_plan:
             trans_data['tax_rate'] = tax_plan.rate
 
+    # For COUPON: resolve rate from coupon_tax_plan_id if provided (only meaningful for BOND)
+    if transaction.type == "COUPON" and transaction.coupon_tax_plan_id:
+        tax_plan = db.query(db_mod.TaxPlan).filter(
+            db_mod.TaxPlan.id == transaction.coupon_tax_plan_id,
+            db_mod.TaxPlan.type == "coupon"
+        ).first()
+        if tax_plan:
+            trans_data['tax_rate'] = tax_plan.rate
+
+    # Validate instrument_type for COUPON
+    if transaction.type == "COUPON":
+        valid_types = ("BOND", "CERTIFICATE", "ETC", "ETN")
+        if not transaction.instrument_type or transaction.instrument_type not in valid_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"instrument_type per COUPON deve essere uno di {valid_types}"
+            )
+
     db_trans = db_mod.Transaction(**trans_data)
     db.add(db_trans)
     
@@ -1159,6 +1229,22 @@ def create_transaction(portfolio_id: int, transaction: schemas.TransactionCreate
             db_portfolio.cash_balance += (gross_base - tax_base)
         else:
             db_portfolio.cash_balance -= (gross_base + tax_base)
+    elif db_trans.type == "COUPON":
+        # Coupon (cedola): behaves like a dividend, but classification depends on instrument_type.
+        # BOND: subject to tax via coupon_tax_plan; cash += gross - tax.
+        # CERTIFICATE/ETC/ETN: tax-free at source; the gross amount is added to cash AND
+        #                      consumed from the broker's fiscal backpack (see finance_logic).
+        # Tax (if any) is stored in commission_paid for reversibility.
+        shares = abs(db_trans.quantity)
+        gross_base = db_trans.price * shares * db_trans.exchange_rate
+        if db_trans.instrument_type == "BOND":
+            tax_base = gross_base * (db_trans.tax_rate / 100.0) if (db_trans.tax_rate and db_trans.tax_rate > 0) else 0.0
+        else:
+            tax_base = 0.0  # no withholding on certificate/ETC/ETN coupons
+        db_trans.commission_paid = tax_base
+        # The full gross is added to cash for both categories; the backpack erosion for
+        # CERT/ETC/ETN is handled later by finance_logic.get_portfolio_summary.
+        db_portfolio.cash_balance += (gross_base - tax_base)
     else:
         # Cash accounting
         trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
@@ -1188,13 +1274,19 @@ def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
         db_portfolio.cash_balance -= _compute_dividend_cash_delta(
             db_trans.price, db_trans.quantity, db_trans.exchange_rate, db_trans.tax_rate or 0.0
         )
+    elif db_trans.type == "COUPON":
+        # Reverse coupon: subtract the original cash impact
+        shares = abs(db_trans.quantity)
+        gross_base = db_trans.price * shares * db_trans.exchange_rate
+        tax_base = db_trans.commission_paid or 0.0
+        db_portfolio.cash_balance -= (gross_base - tax_base)
     else:
         trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
         if db_trans.type in ["BUY", "COVER"]:
             db_portfolio.cash_balance += (trade_val + db_trans.commission_paid + db_trans.tobin_tax_paid)
         elif db_trans.type in ["SELL", "SHORT"]:
             db_portfolio.cash_balance -= (trade_val - db_trans.commission_paid)
-            
+
     db.delete(db_trans)
     db.commit()
     return {"message": "Transaction deleted"}
@@ -1218,6 +1310,12 @@ def update_transaction(transaction_id: int, transaction: schemas.TransactionCrea
         db_portfolio.cash_balance -= _compute_dividend_cash_delta(
             db_trans.price, db_trans.quantity, db_trans.exchange_rate, db_trans.tax_rate or 0.0
         )
+    elif db_trans.type == "COUPON":
+        # Reverse old coupon cash impact
+        shares_old = abs(db_trans.quantity)
+        gross_old = db_trans.price * shares_old * db_trans.exchange_rate
+        tax_old = db_trans.commission_paid or 0.0
+        db_portfolio.cash_balance -= (gross_old - tax_old)
     else:
         old_trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
         if db_trans.type in ["BUY", "COVER"]:
@@ -1269,6 +1367,25 @@ def update_transaction(transaction_id: int, transaction: schemas.TransactionCrea
         if tax_plan:
             dividend_tax_rate = tax_plan.rate
 
+    # Resolve coupon tax rate from plan if provided
+    coupon_tax_rate = transaction.tax_rate
+    if transaction.coupon_tax_plan_id and transaction.type == "COUPON":
+        tax_plan = db.query(db_mod.TaxPlan).filter(
+            db_mod.TaxPlan.id == transaction.coupon_tax_plan_id,
+            db_mod.TaxPlan.type == "coupon"
+        ).first()
+        if tax_plan:
+            coupon_tax_rate = tax_plan.rate
+
+    # Validate instrument_type for COUPON
+    if transaction.type == "COUPON":
+        valid_types = ("BOND", "CERTIFICATE", "ETC", "ETN")
+        if not transaction.instrument_type or transaction.instrument_type not in valid_types:
+            raise HTTPException(
+                status_code=400,
+                detail=f"instrument_type per COUPON deve essere uno di {valid_types}"
+            )
+
     # 3. Update fields
     db_trans.ticker = transaction.ticker
     db_trans.broker_id = transaction.broker_id
@@ -1281,11 +1398,13 @@ def update_transaction(transaction_id: int, transaction: schemas.TransactionCrea
     db_trans.commission_plan_id = transaction.commission_plan_id
     db_trans.commission_paid = commission_paid
     db_trans.short_borrow_fee_rate = transaction.short_borrow_fee_rate
-    db_trans.tax_rate = dividend_tax_rate if transaction.type == "DIVIDEND" else transaction.tax_rate
+    db_trans.tax_rate = dividend_tax_rate if transaction.type == "DIVIDEND" else (coupon_tax_rate if transaction.type == "COUPON" else transaction.tax_rate)
     db_trans.tobin_tax_plan_id = transaction.tobin_tax_plan_id
     db_trans.tobin_tax_paid = tobin_tax_paid
     db_trans.capital_gains_tax_plan_id = transaction.capital_gains_tax_plan_id
     db_trans.dividend_tax_plan_id = transaction.dividend_tax_plan_id
+    db_trans.coupon_tax_plan_id = transaction.coupon_tax_plan_id
+    db_trans.instrument_type = transaction.instrument_type or "STOCK"
     db_trans.note = transaction.note
 
     # 4. Apply new cash impact
@@ -1303,6 +1422,16 @@ def update_transaction(transaction_id: int, transaction: schemas.TransactionCrea
             db_portfolio.cash_balance += (gross_base - tax_base)
         else:
             db_portfolio.cash_balance -= (gross_base + tax_base)
+    elif db_trans.type == "COUPON":
+        # For COUPON, tax only for BOND; CERT/ETC/ETN have implicit "tax" via backpack erosion
+        shares = abs(db_trans.quantity)
+        gross_base = db_trans.price * shares * db_trans.exchange_rate
+        if db_trans.instrument_type == "BOND":
+            tax_base = gross_base * (coupon_tax_rate / 100.0) if (coupon_tax_rate and coupon_tax_rate > 0) else 0.0
+        else:
+            tax_base = 0.0
+        db_trans.commission_paid = tax_base
+        db_portfolio.cash_balance += (gross_base - tax_base)
     else:
         new_trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
         if db_trans.type in ["BUY", "COVER"]:

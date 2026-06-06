@@ -736,6 +736,102 @@ th {
     border-top: 1px solid var(--border-color);
 }
 
+/* Fiscal backpack mini-list (inside the stat-box) */
+.backpack-mini-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    text-align: left;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    line-height: 1.3;
+    max-width: 220px;
+    margin: 0 auto;
+}
+
+.backpack-mini-row {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    align-items: baseline;
+}
+
+.backpack-mini-name {
+    color: var(--text-color);
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.backpack-mini-amount {
+    color: #ff8a65;
+    font-weight: 600;
+    flex-shrink: 0;
+}
+
+.backpack-mini-years {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    text-align: right;
+    margin-top: 1px;
+}
+
+.backpack-more-link {
+    display: block;
+    margin-top: 4px;
+    font-size: 0.78rem;
+    color: var(--accent-color);
+    text-decoration: none;
+    cursor: pointer;
+    text-align: center;
+}
+
+.backpack-more-link:hover {
+    text-decoration: underline;
+    color: #58a6ff;
+}
+
+/* Backpack modal - per-broker sections */
+.backpack-modal-broker {
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    margin-bottom: 8px;
+}
+
+.backpack-modal-broker:last-child {
+    margin-bottom: 0;
+}
+
+.backpack-modal-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-color);
+    margin-bottom: 8px;
+}
+
+.backpack-modal-years {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.backpack-year-chip {
+    display: inline-block;
+    padding: 3px 8px;
+    background: rgba(255, 138, 101, 0.12);
+    border: 1px solid rgba(255, 138, 101, 0.3);
+    color: #ff8a65;
+    border-radius: 12px;
+    font-size: 0.78rem;
+    font-weight: 500;
+}
+
 /* Indicator tags - edit icon */
 .indicator-tag {
     display: flex;
