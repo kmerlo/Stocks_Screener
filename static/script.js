@@ -9019,6 +9019,13 @@ function renderPortfolioHistory() {
             if (k === 'cvVal') { va = (a.price||0)*(a.quantity||0); vb = (b.price||0)*(b.quantity||0); return (va-vb)*d; }
             if (k === 'tobin_tax') { va = a.tobin_tax_paid ?? 0; vb = b.tobin_tax_paid ?? 0; return (va-vb)*d; }
             if (k === 'cg_tax') { va = a.capital_gains_tax_paid ?? 0; vb = b.capital_gains_tax_paid ?? 0; return (va-vb)*d; }
+            if (k === 'imposta' || k === 'net_imposta') {
+                const ta = computeTransactionTax(a);
+                const tb = computeTransactionTax(b);
+                va = k === 'imposta' ? ta.imposta : ta.nettoImposta;
+                vb = k === 'imposta' ? tb.imposta : tb.nettoImposta;
+                return (va - vb) * d;
+            }
             va = a[k] ?? 0; vb = b[k] ?? 0;
             return (va - vb) * d;
         });
@@ -9041,6 +9048,8 @@ function renderPortfolioHistory() {
             const histNoteHtml = t.note ? `<button class="header-btn small" style="background: var(--accent-color);" onclick="event.stopPropagation(); openNoteModal(decodeURIComponent('${histTickerEnc}'), decodeURIComponent('${histNoteEnc}'))">👁</button>` : '—';
             
             const brokerName = t.broker_id ? (currentBrokers.find(b => b.id === t.broker_id)?.name || '—') : '—';
+            const tax = computeTransactionTax(t);
+            const fmtTax = (v) => v > 0.005 ? v.toFixed(2) : '—';
             tr.innerHTML = `
                 <td>${formattedDate}</td>
                 <td>${tickerHtml}</td>
@@ -9055,6 +9064,9 @@ function renderPortfolioHistory() {
                 <td>${t.commission_paid.toFixed(2)}</td>
                 <td>${(t.tobin_tax_paid ?? 0).toFixed(2)}</td>
                 <td>${(t.capital_gains_tax_paid ?? 0).toFixed(2)}</td>
+                <td>${fmtTax(tax.imposta)}</td>
+                <td>${tax.erodesBackpack ? '<span style="color: #ff8a65; font-weight: bold;">Sì</span>' : '—'}</td>
+                <td>${fmtTax(tax.nettoImposta)}</td>
                 <td>${histNoteHtml}</td>
                 <td>
                     <button class="header-btn secondary small" style="margin-right: 4px;" onclick="openEditTransactionModal(${t.id})">Mod</button>
@@ -9077,6 +9089,27 @@ function getTransTypeColor(type, quantity) {
         case 'DIVIDEND': return (quantity < 0) ? '#e57373' : '#fbc02d';
         default: return '#888';
     }
+}
+
+function computeTransactionTax(t) {
+    const gross = Math.abs(t.price || 0) * Math.abs(t.quantity || 0) * (t.exchange_rate || 1);
+    let imposta = 0;
+    let erodesBackpack = false;
+    let nettoImposta = 0;
+    if (t.type === 'DIVIDEND') {
+        imposta = gross * ((t.tax_rate || 0) / 100);
+        nettoImposta = imposta;
+    } else if (t.type === 'COUPON') {
+        if (t.instrument_type === 'BOND') {
+            imposta = gross * ((t.tax_rate || 0) / 100);
+            nettoImposta = imposta;
+        } else if (t.instrument_type === 'CERTIFICATE' || t.instrument_type === 'ETC' || t.instrument_type === 'ETN') {
+            imposta = 0;
+            erodesBackpack = true;
+            nettoImposta = 0;
+        }
+    }
+    return { imposta, erodesBackpack, nettoImposta };
 }
 
 async function deleteTransaction(id) {
