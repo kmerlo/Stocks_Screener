@@ -881,6 +881,8 @@
                             <button id="create-portfolio-btn" class="header-btn">Nuovo</button>
                             <button id="delete-portfolio-btn" class="header-btn" style="background-color: var(--danger-color);">Cancella</button>
                             <button id="manage-commission-plans-btn" class="header-btn secondary">Piani Commissionali</button>
+                            <button id="manage-tax-plans-btn" class="header-btn secondary">Piani Fiscalità</button>
+                            <button id="manage-brokers-btn" class="header-btn secondary">Broker</button>
                         </div>
                     </div>
                 </div>
@@ -910,6 +912,20 @@
                     <div class="stat-box" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; text-align: center;" title="Già inclusi nella Liquidità (Cash)">
                         <div style="font-size: 0.9rem; color: var(--text-secondary);">Dividendi Netti 💰</div>
                         <div id="portfolio-dividends-display" style="font-size: 1.5rem; font-weight: bold; margin-top: 5px; color: #fbc02d;">0.00</div>
+                    </div>
+                    <div class="stat-box" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 0.9rem; color: var(--text-secondary);">Zainetto Fiscale</div>
+                        <div id="portfolio-backpack-display" style="font-size: 1.3rem; font-weight: bold; margin-top: 5px; color: #ff8a65;">0.00</div>
+                        <div id="portfolio-backpack-detail" style="font-size: 0.8rem; margin-top: 2px; color: var(--text-secondary);">—</div>
+                    </div>
+                    <div class="stat-box" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 0.9rem; color: var(--text-secondary);">Tasse Totali Pagate</div>
+                        <div id="portfolio-tax-display" style="font-size: 1.3rem; font-weight: bold; margin-top: 5px; color: #e57373;">0.00</div>
+                        <div id="portfolio-tax-detail" style="font-size: 0.8rem; margin-top: 2px; color: var(--text-secondary);">—</div>
+                    </div>
+                    <div class="stat-box" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 0.9rem; color: var(--text-secondary);">P&L Realizzato Netto</div>
+                        <div id="portfolio-aftertax-display" style="font-size: 1.3rem; font-weight: bold; margin-top: 5px;">0.00</div>
                     </div>
                 </div>
 
@@ -952,6 +968,7 @@
                                 <th onclick="togglePosSort('pct_val')" class="sortable-th instrument-col">% (Valuta) <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('daily_change_pct')" class="sortable-th">Var. % Giornaliera <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('weight')" class="sortable-th">% Portfolio <span class="sort-arrow"></span></th>
+                                <th>Tobin Tax</th>
                                 <th>Note</th>
                                 <th>Dividendo</th>
                                 <th>Azioni</th>
@@ -972,6 +989,7 @@
                                 <th class="instrument-col"><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pct-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pct-val-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-daily-pct-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-daily-pct-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-weight-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-weight-max" class="portfolio-pos-filter"></div></th>
+                                <th></th>
                                 <th></th>
                                 <th></th>
                                 <th></th>
@@ -1004,7 +1022,10 @@
                                 <th onclick="toggleHistSort('cvVal')" class="sortable-th instrument-col">Controv. (Valuta) <span class="sort-arrow"></span></th>
                                 <th onclick="toggleHistSort('currency')" class="sortable-th instrument-col">Valuta <span class="sort-arrow"></span></th>
                                 <th onclick="toggleHistSort('fx')" class="sortable-th instrument-col">Cambio <span class="sort-arrow"></span></th>
+                                <th>Broker</th>
                                 <th onclick="toggleHistSort('comm')" class="sortable-th">Commissioni <span class="sort-arrow"></span></th>
+                                <th>Tobin Tax</th>
+                                <th>CG Tax</th>
                                 <th>Note</th>
                                 <th>Azioni</th>
                             </tr>
@@ -1018,7 +1039,10 @@
                                 <th class="instrument-col"><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-cv-val-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-cv-val-max" class="portfolio-hist-filter"></div></th>
                                 <th class="instrument-col"><input type="text" placeholder="Filtra Valuta" id="hist-filter-currency" class="portfolio-hist-filter" style="width:100%"></th>
                                 <th class="instrument-col"><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-fx-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-fx-max" class="portfolio-hist-filter"></div></th>
+                                <th></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="hist-filter-comm-min" class="portfolio-hist-filter"><input type="text" placeholder="a" id="hist-filter-comm-max" class="portfolio-hist-filter"></div></th>
+                                <th></th>
+                                <th></th>
                                 <th></th>
                                 <th></th>
                             </tr>
@@ -1268,9 +1292,30 @@
                     <input type="number" step="0.000001" id="trans-fx" value="1.0" style="flex:1;">
                 </div>
                 <div class="modal-form-row">
+                    <label>Broker:</label>
+                    <select id="trans-broker" style="flex:1;" required>
+                        <option value="">Seleziona broker...</option>
+                        <!-- Populated dynamically -->
+                    </select>
+                </div>
+                <div class="modal-form-row">
                     <label>Piano Commissionale:</label>
                     <select id="trans-commission-plan" style="flex:1;">
                         <option value="">Nessuno (0.00)</option>
+                        <!-- Populated dynamically -->
+                    </select>
+                </div>
+                <div class="modal-form-row" id="trans-tobin-tax-row" style="display:none;">
+                    <label>Piano Tobin Tax (Acquisto):</label>
+                    <select id="trans-tobin-tax-plan" style="flex:1;">
+                        <option value="">Nessuna (0.00)</option>
+                        <!-- Populated dynamically -->
+                    </select>
+                </div>
+                <div class="modal-form-row" id="trans-cg-tax-row" style="display:none;">
+                    <label>Piano Capital Gains (Vendita):</label>
+                    <select id="trans-cg-tax-plan" style="flex:1;">
+                        <option value="">Nessuna (0.00)</option>
                         <!-- Populated dynamically -->
                     </select>
                 </div>
@@ -1379,12 +1424,26 @@
                         <span id="div-direction-label">LONG (ricevi dividendo)</span>
                     </div>
                 </div>
+                <div class="modal-form-row">
+                    <label>Broker:</label>
+                    <select id="div-broker" style="flex:1;">
+                        <option value="">Seleziona broker...</option>
+                        <!-- Populated dynamically -->
+                    </select>
+                </div>
                 <hr class="modal-divider" style="margin: 14px 0; border: 0; border-top: 1px solid var(--border-color);">
                 <div class="modal-form-row">
                     <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-weight:normal;">
                         <input type="checkbox" id="div-apply-tax" checked>
                         Applica Tasse
                     </label>
+                </div>
+                <div class="modal-form-row" id="div-tax-plan-row">
+                    <label>Piano Fiscale Dividendi:</label>
+                    <select id="div-tax-plan" style="flex:1;">
+                        <option value="">Seleziona piano...</option>
+                        <!-- Populated dynamically from /tax_plans/?type=dividend -->
+                    </select>
                 </div>
                 <div class="modal-form-row" id="div-tax-rate-row">
                     <label>Aliquota Tasse (%):</label>
@@ -1458,6 +1517,69 @@
         </div>
 
 
+    <!-- Tax Plans Modal -->
+    <div id="tax-plans-modal" class="modal-overlay hidden">
+        <div class="modal-box" style="max-width: 650px;">
+            <div class="modal-header">
+                <span>Gestione Piani Fiscalità</span>
+                <button class="modal-close-btn" onclick="document.getElementById('tax-plans-modal').classList.add('hidden')">×</button>
+            </div>
+            <div class="modal-body">
+                <div style="display: flex; gap: 6px; margin-bottom: 15px; border-bottom: 1px solid var(--border-color); padding-bottom: 8px;">
+                    <button class="tax-tab-btn" data-tax-type="tobin" onclick="switchTaxTab('tobin')" style="padding: 6px 16px; border-radius: 4px; cursor: pointer; background: var(--accent-color); color: #fff; border: none;">Tobin Tax</button>
+                    <button class="tax-tab-btn" data-tax-type="capital_gains" onclick="switchTaxTab('capital_gains')" style="padding: 6px 16px; border-radius: 4px; cursor: pointer; background: var(--bg-color); color: var(--text-color); border: 1px solid var(--border-color);">Capital Gains</button>
+                    <button class="tax-tab-btn" data-tax-type="dividend" onclick="switchTaxTab('dividend')" style="padding: 6px 16px; border-radius: 4px; cursor: pointer; background: var(--bg-color); color: var(--text-color); border: 1px solid var(--border-color);">Dividendi</button>
+                </div>
+                <div style="display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap;">
+                    <input type="text" id="tax-name" placeholder="Nome (es: Bollo Italia 0.2%)" style="flex: 1; min-width: 120px;">
+                    <input type="number" step="0.01" id="tax-rate-input" placeholder="Aliquota (%)" style="width: 100px;">
+                    <button id="add-tax-plan-btn">Aggiungi</button>
+                </div>
+                <p style="font-size: 0.85rem; color: var(--text-secondary); margin: 0 0 10px 0;" id="tax-active-type-label">Tipo attivo: <strong>Tobin Tax</strong></p>
+                <table id="tax-plans-table" style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <th style="text-align: left; padding: 5px;">Nome</th>
+                            <th style="text-align: left; padding: 5px;">Tipo</th>
+                            <th style="text-align: right; padding: 5px;">Aliquota</th>
+                            <th style="text-align: center; padding: 5px;">Azioni</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tax-plans-body">
+                        <!-- Tax plans will be listed here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Broker Modal -->
+    <div id="broker-modal" class="modal-overlay hidden">
+        <div class="modal-box" style="max-width: 500px;">
+            <div class="modal-header">
+                <span>Gestione Broker</span>
+                <button class="modal-close-btn" onclick="document.getElementById('broker-modal').classList.add('hidden')">×</button>
+            </div>
+            <div class="modal-body">
+                <div style="display: flex; gap: 10px; margin-bottom: 15px; flex-wrap: wrap;">
+                    <input type="text" id="broker-name" placeholder="Nome broker (es: Fineco)" style="flex: 1; min-width: 120px;">
+                    <button id="add-broker-btn">Aggiungi Broker</button>
+                </div>
+                <table id="broker-table" style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+                    <thead>
+                        <tr style="border-bottom: 1px solid var(--border-color);">
+                            <th style="text-align: left; padding: 5px;">Nome</th>
+                            <th style="text-align: center; padding: 5px;">Azioni</th>
+                        </tr>
+                    </thead>
+                    <tbody id="broker-body">
+                        <!-- Brokers will be listed here -->
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <!-- Note Viewer Modal -->
     <div id="note-modal" class="modal-overlay hidden">
         <div class="modal-box" style="max-width: 500px;">
@@ -1474,7 +1596,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=11"></script>
+    <script src="script.js?v=12"></script>
 </body>
 
 </html>

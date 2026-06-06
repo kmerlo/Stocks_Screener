@@ -242,11 +242,49 @@ class CommissionPlan(Base):
 
     transactions = relationship("Transaction", back_populates="commission_plan")
 
+class Broker(Base):
+    __tablename__ = "brokers"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+
+    transactions = relationship("Transaction", back_populates="broker")
+
+    def __repr__(self):
+        return f"<Broker(id={self.id}, name='{self.name}')>"
+
+
+class TaxPlan(Base):
+    __tablename__ = "tax_plans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    type = Column(String)  # 'tobin', 'capital_gains', 'dividend'
+    rate = Column(Float, default=0.0)
+    currency = Column(String, default="EUR")
+
+    transactions_tobin = relationship("Transaction", back_populates="tobin_tax_plan", foreign_keys="Transaction.tobin_tax_plan_id")
+    transactions_cg = relationship("Transaction", back_populates="capital_gains_tax_plan", foreign_keys="Transaction.capital_gains_tax_plan_id")
+    transactions_dividend = relationship("Transaction", back_populates="dividend_tax_plan", foreign_keys="Transaction.dividend_tax_plan_id")
+
+
+class FiscalBackpackEntry(Base):
+    __tablename__ = "fiscal_backpack_entries"
+
+    id = Column(Integer, primary_key=True, index=True)
+    broker_id = Column(Integer, ForeignKey("brokers.id"), index=True)
+    loss_year = Column(Integer, index=True)
+    remaining_loss = Column(Float, default=0.0)
+
+    broker = relationship("Broker")
+
+
 class Transaction(Base):
     __tablename__ = "transactions"
 
     id = Column(Integer, primary_key=True, index=True)
     portfolio_id = Column(Integer, ForeignKey("portfolios.id"))
+    broker_id = Column(Integer, ForeignKey("brokers.id"), nullable=True)
     ticker = Column(String, index=True)
     type = Column(String) # BUY, SELL, SHORT, COVER, DEPOSIT, WITHDRAWAL
     date = Column(DateTime, index=True)
@@ -258,10 +296,19 @@ class Transaction(Base):
     commission_paid = Column(Float, default=0.0) # In base_currency
     short_borrow_fee_rate = Column(Float, default=0.0) # Annual percentage rate e.g., 5.0 for 5%
     tax_rate = Column(Float, default=0.0) # Dividend tax rate (percent), used for type=DIVIDEND
+    tobin_tax_plan_id = Column(Integer, ForeignKey("tax_plans.id"), nullable=True)
+    tobin_tax_paid = Column(Float, default=0.0)
+    capital_gains_tax_plan_id = Column(Integer, ForeignKey("tax_plans.id"), nullable=True)
+    capital_gains_tax_paid = Column(Float, default=0.0)
+    dividend_tax_plan_id = Column(Integer, ForeignKey("tax_plans.id"), nullable=True)
     note = Column(Text, default="")
 
     portfolio = relationship("Portfolio", back_populates="transactions")
+    broker = relationship("Broker", back_populates="transactions")
     commission_plan = relationship("CommissionPlan", back_populates="transactions")
+    tobin_tax_plan = relationship("TaxPlan", back_populates="transactions_tobin", foreign_keys=[tobin_tax_plan_id])
+    capital_gains_tax_plan = relationship("TaxPlan", back_populates="transactions_cg", foreign_keys=[capital_gains_tax_plan_id])
+    dividend_tax_plan = relationship("TaxPlan", back_populates="transactions_dividend", foreign_keys=[dividend_tax_plan_id])
 
 def init_db():
     Base.metadata.create_all(bind=engine)
@@ -289,6 +336,84 @@ def init_db():
         conn.close()
     except Exception:
         pass  # Column already exists
+    # Migration: add tobin_tax columns to transactions
+    try:
+        conn = engine.connect()
+        conn.execute(text("ALTER TABLE transactions ADD COLUMN tobin_tax_plan_id INTEGER REFERENCES tax_plans(id)"))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+    try:
+        conn = engine.connect()
+        conn.execute(text("ALTER TABLE transactions ADD COLUMN tobin_tax_paid FLOAT DEFAULT 0.0"))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+    try:
+        conn = engine.connect()
+        conn.execute(text("ALTER TABLE transactions ADD COLUMN capital_gains_tax_plan_id INTEGER REFERENCES tax_plans(id)"))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+    try:
+        conn = engine.connect()
+        conn.execute(text("ALTER TABLE transactions ADD COLUMN capital_gains_tax_paid FLOAT DEFAULT 0.0"))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+    try:
+        conn = engine.connect()
+        conn.execute(text("ALTER TABLE transactions ADD COLUMN dividend_tax_plan_id INTEGER REFERENCES tax_plans(id)"))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+    # Migration: add broker_id column to transactions
+    try:
+        conn = engine.connect()
+        conn.execute(text("ALTER TABLE transactions ADD COLUMN broker_id INTEGER REFERENCES brokers(id)"))
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+    
+    # Ensure default broker exists
+    try:
+        from sqlalchemy.orm import Session as SASession
+        session = SessionLocal()
+        default = session.query(Broker).filter(Broker.name == "Generale").first()
+        if not default:
+            default = Broker(name="Generale")
+            session.add(default)
+            session.commit()
+            # Assign all existing transactions without broker to the default broker
+            session.query(Transaction).filter(Transaction.broker_id == None).update(
+                {Transaction.broker_id: default.id}
+            )
+            session.commit()
+        session.close()
+    except Exception:
+        pass
+
+    # Ensure default fiscal backpack table structure is correct (handle migration from portfolio_id to broker_id)
+    try:
+        conn = engine.connect()
+        # Check if portfolio_id column exists in fiscal_backpack_entries
+        result = conn.execute(text("PRAGMA table_info(fiscal_backpack_entries)")).fetchall()
+        cols = [row[1] for row in result]
+        if 'portfolio_id' in cols and 'broker_id' not in cols:
+            # Drop old entries and rename column — or just add broker_id
+            # Actually SQLite doesn't support ALTER TABLE DROP COLUMN, so we just add broker_id
+            conn.execute(text("ALTER TABLE fiscal_backpack_entries ADD COLUMN broker_id INTEGER REFERENCES brokers(id)"))
+            conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
 
 if __name__ == "__main__":
     init_db()

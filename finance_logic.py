@@ -1290,7 +1290,7 @@ class FinanceLogic:
             return self.get_fx_rate(base, quote)
 
     def get_portfolio_summary(self, db: Session, portfolio_id: int):
-        from database import Portfolio, Transaction, PriceData
+        from database import Portfolio, Transaction, PriceData, TaxPlan, FiscalBackpackEntry
         from fastapi import HTTPException
 
         portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
@@ -1299,9 +1299,18 @@ class FinanceLogic:
 
         transactions = db.query(Transaction).filter(Transaction.portfolio_id == portfolio_id).order_by(Transaction.date.asc()).all()
 
+        # Collect realized events for fiscal backpack computation
+        realized_events = []  # (date, year, amount, type, tax_plan_id, tx_obj)
+        # type: 'sell_gain', 'sell_loss', 'cover_gain', 'cover_loss', 'dividend'
+
         positions = {}
         for t in transactions:
-            if t.type in ["DEPOSIT", "WITHDRAWAL"]:
+            if t.type in ["DEPOSIT", "WITHDRAWAL", "DIVIDEND"]:
+                if t.type == "DIVIDEND":
+                    tx_year = t.date.year if t.date else datetime.now().year
+                    shares = abs(t.quantity)
+                    gross_base = t.price * shares * t.exchange_rate
+                    realized_events.append((t.date, tx_year, gross_base, 'dividend', t.dividend_tax_plan_id, t))
                 continue
                 
             sym = t.ticker
@@ -1330,6 +1339,7 @@ class FinanceLogic:
             trade_qty = t.quantity
             trade_price = t.price * t.exchange_rate  # Convert to base currency
             trade_price_instrument = t.price         # In instrument currency
+            tx_year = t.date.year if t.date else datetime.now().year
             
             if t.type == "BUY":
                 new_qty = p["quantity"] + trade_qty
@@ -1350,6 +1360,12 @@ class FinanceLogic:
                     realized_instrument = (trade_price_instrument - p["pmc_instrument"]) * trade_qty
                     p["realized_pl_instrument"] += realized_instrument
                     p["total_invested_instrument"] -= (p["pmc_instrument"] * trade_qty)
+                    
+                    # Track for fiscal backpack
+                    if realized >= 0:
+                        realized_events.append((t.date, tx_year, realized, 'sell_gain', t.capital_gains_tax_plan_id, t))
+                    else:
+                        realized_events.append((t.date, tx_year, abs(realized), 'sell_loss', None, t))
                 p["quantity"] -= trade_qty
                 
             elif t.type == "SHORT":
@@ -1371,7 +1387,121 @@ class FinanceLogic:
                     realized_instrument = (p["pmc_instrument"] - trade_price_instrument) * trade_qty
                     p["realized_pl_instrument"] += realized_instrument
                     p["total_invested_instrument"] -= (p["pmc_instrument"] * trade_qty)
+                    
+                    # Track for fiscal backpack
+                    if realized >= 0:
+                        realized_events.append((t.date, tx_year, realized, 'cover_gain', t.capital_gains_tax_plan_id, t))
+                    else:
+                        realized_events.append((t.date, tx_year, abs(realized), 'cover_loss', None, t))
                 p["quantity"] += trade_qty
+
+        # --- Fiscal Backpack Computation (Italian 4-year carry, PER BROKER) ---
+        from database import Broker as BrokerModel
+        current_year = datetime.now().year
+        total_cg_tax = 0.0
+        total_dividend_tax_from_plan = 0.0
+        total_tobin_tax = sum(t.tobin_tax_paid or 0.0 for t in transactions)
+
+        # Reset per-transaction CG tax before recomputing
+        for t in transactions:
+            if t.type in ('SELL', 'COVER'):
+                t.capital_gains_tax_paid = 0.0
+
+        def is_expired(loss_year):
+            return loss_year + 4 < current_year
+
+        # Per-broker backpack buckets: {broker_id: [[loss_year, remaining_loss], ...]}
+        broker_backpacks = {}
+
+        def get_buckets(broker_id):
+            if broker_id not in broker_backpacks:
+                broker_backpacks[broker_id] = []
+            return broker_backpacks[broker_id]
+
+        def add_broker_loss(broker_id, loss_year, amount):
+            if is_expired(loss_year):
+                return
+            buckets = get_buckets(broker_id)
+            for b in buckets:
+                if b[0] == loss_year:
+                    b[1] += amount
+                    return
+            buckets.append([loss_year, amount])
+
+        def offset_broker_backpack(broker_id, amount):
+            buckets = get_buckets(broker_id)
+            remaining = amount
+            while remaining > 0.001 and buckets:
+                if is_expired(buckets[0][0]):
+                    buckets.pop(0)
+                    continue
+                used = min(remaining, buckets[0][1])
+                remaining -= used
+                buckets[0][1] -= used
+                if buckets[0][1] < 0.001:
+                    buckets.pop(0)
+            return remaining
+
+        # Sort events chronologically and process per broker
+        sorted_events = sorted(realized_events, key=lambda x: x[0])
+        for date, year, amount, etype, tax_plan_id, tx_obj in sorted_events:
+            broker_id = tx_obj.broker_id if tx_obj else None
+            if not broker_id:
+                # Transactions without a broker use a shared null-broker bucket
+                # (shouldn't happen after migration, but handle gracefully)
+                continue
+
+            if etype in ('sell_loss', 'cover_loss'):
+                add_broker_loss(broker_id, year, amount)
+            elif etype == 'dividend':
+                # Dividends do NOT offset against backpack (Italian tax law)
+                if tax_plan_id:
+                    tax_plan = db.query(TaxPlan).filter(TaxPlan.id == tax_plan_id).first()
+                    if tax_plan and tax_plan.rate > 0:
+                        tax_amount = amount * (tax_plan.rate / 100.0)
+                        total_dividend_tax_from_plan += tax_amount
+            else:
+                # Gain: offset against this broker's backpack first
+                remaining = offset_broker_backpack(broker_id, amount)
+                if remaining > 0.001 and tax_plan_id:
+                    tax_plan = db.query(TaxPlan).filter(TaxPlan.id == tax_plan_id).first()
+                    if tax_plan and tax_plan.rate > 0:
+                        tax_amount = remaining * (tax_plan.rate / 100.0)
+                        total_cg_tax += tax_amount
+                        if tx_obj:
+                            tx_obj.capital_gains_tax_paid = tax_amount
+
+        # Persist updated backpack to DB (per broker)
+        all_broker_ids = list(broker_backpacks.keys())
+        for broker_id in all_broker_ids:
+            db.query(FiscalBackpackEntry).filter(
+                FiscalBackpackEntry.broker_id == broker_id
+            ).delete()
+            for loss_year, loss in broker_backpacks[broker_id]:
+                if loss > 0.001 and not is_expired(loss_year):
+                    db.add(FiscalBackpackEntry(
+                        broker_id=broker_id,
+                        loss_year=loss_year,
+                        remaining_loss=loss
+                    ))
+        db.commit()
+
+        # Build per-broker backpack response
+        backpack_by_broker = []
+        for broker_id in all_broker_ids:
+            entries = db.query(FiscalBackpackEntry).filter(
+                FiscalBackpackEntry.broker_id == broker_id
+            ).order_by(FiscalBackpackEntry.loss_year.asc()).all()
+            broker_obj = db.query(BrokerModel).filter(BrokerModel.id == broker_id).first()
+            by_year = [{"loss_year": e.loss_year, "remaining_loss": e.remaining_loss} for e in entries if e.remaining_loss > 0.001 and not is_expired(e.loss_year)]
+            total_rem = sum(e.remaining_loss for e in entries if e.remaining_loss > 0.001 and not is_expired(e.loss_year))
+            backpack_by_broker.append({
+                "broker_id": broker_id,
+                "broker_name": broker_obj.name if broker_obj else f"Broker #{broker_id}",
+                "by_year": by_year,
+                "total_remaining": total_rem
+            })
+        total_backpack = sum(b["total_remaining"] for b in backpack_by_broker)
 
         active_positions = []
         total_invested = 0.0
@@ -1393,6 +1523,13 @@ class FinanceLogic:
                     total_net_dividends += (gross_base - tax_base)
                 else:
                     total_net_dividends -= (gross_base + tax_base)
+
+        # Aggregate Tobin tax per ticker
+        tobin_tax_by_ticker = {}
+        for t in transactions:
+            if t.type == "BUY" and t.ticker and (t.tobin_tax_paid or 0.0) > 0:
+                ticker = t.ticker
+                tobin_tax_by_ticker[ticker] = tobin_tax_by_ticker.get(ticker, 0.0) + (t.tobin_tax_paid or 0.0)
 
         # Cache for FX rates to avoid multiple calls for the same currency pair
         fx_cache = {}
@@ -1472,7 +1609,11 @@ class FinanceLogic:
                     p["unrealized_pl"] = 0.0
                     p["unrealized_pl_instrument"] = 0.0
 
+                p["total_tobin_tax"] = tobin_tax_by_ticker.get(sym, 0.0)
                 active_positions.append(p)
+
+        total_realized_pl = sum(p["realized_pl"] for p in positions.values())
+        after_tax_realized_pl = total_realized_pl - total_cg_tax
 
         return {
             "portfolio": {
@@ -1485,11 +1626,19 @@ class FinanceLogic:
                 "total_invested": total_invested,
                 "total_current_value": total_current_value,
                 "total_unrealized_pl": unrealized_pl,
-                "total_realized_pl": sum(p["realized_pl"] for p in positions.values()),
+                "total_realized_pl": total_realized_pl,
                 "total_gross_dividends": total_gross_dividends,
                 "total_dividend_tax": total_dividend_tax,
                 "total_net_dividends": total_net_dividends,
-                "net_liquidity": portfolio.cash_balance + total_current_value
+                "net_liquidity": portfolio.cash_balance + total_current_value,
+                # Tax & fiscal backpack fields
+                "total_tobin_tax_paid": total_tobin_tax,
+                "total_capital_gains_tax": total_cg_tax,
+                "total_dividend_tax_from_plans": total_dividend_tax_from_plan,
+                "total_tax_paid": total_tobin_tax + total_cg_tax + total_dividend_tax,
+                "after_tax_realized_pl": after_tax_realized_pl,
+                "fiscal_backpack_by_broker": backpack_by_broker,
+                "fiscal_backpack_total": total_backpack
             },
             "positions": active_positions
         }

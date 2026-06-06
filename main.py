@@ -1004,6 +1004,77 @@ def delete_commission_plan(plan_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Commission Plan deleted"}
 
+# --- Tax Plan Endpoints ---
+
+@app.get("/tax_plans/", response_model=List[schemas.TaxPlan])
+def get_tax_plans(type: Optional[str] = None, db: Session = Depends(get_db)):
+    q = db.query(db_mod.TaxPlan)
+    if type:
+        q = q.filter(db_mod.TaxPlan.type == type)
+    return q.all()
+
+@app.post("/tax_plans/", response_model=schemas.TaxPlan)
+def create_tax_plan(plan: schemas.TaxPlanCreate, db: Session = Depends(get_db)):
+    db_plan = db_mod.TaxPlan(**plan.model_dump())
+    db.add(db_plan)
+    db.commit()
+    db.refresh(db_plan)
+    return db_plan
+
+@app.delete("/tax_plans/{plan_id}")
+def delete_tax_plan(plan_id: int, db: Session = Depends(get_db)):
+    db_plan = db.query(db_mod.TaxPlan).filter(db_mod.TaxPlan.id == plan_id).first()
+    if not db_plan:
+        raise HTTPException(status_code=404, detail="Tax Plan not found")
+    db.delete(db_plan)
+    db.commit()
+    return {"message": "Tax Plan deleted"}
+
+# --- Broker Endpoints ---
+
+@app.get("/brokers/", response_model=List[schemas.Broker])
+def get_brokers(db: Session = Depends(get_db)):
+    return db.query(db_mod.Broker).order_by(db_mod.Broker.name.asc()).all()
+
+@app.post("/brokers/", response_model=schemas.Broker)
+def create_broker(broker: schemas.BrokerCreate, db: Session = Depends(get_db)):
+    db_broker = db_mod.Broker(**broker.model_dump())
+    db.add(db_broker)
+    db.commit()
+    db.refresh(db_broker)
+    return db_broker
+
+@app.delete("/brokers/{broker_id}")
+def delete_broker(broker_id: int, db: Session = Depends(get_db)):
+    db_broker = db.query(db_mod.Broker).filter(db_mod.Broker.id == broker_id).first()
+    if not db_broker:
+        raise HTTPException(status_code=404, detail="Broker not found")
+    # Unlink transactions pointing to this broker
+    db.query(db_mod.Transaction).filter(db_mod.Transaction.broker_id == broker_id).update(
+        {db_mod.Transaction.broker_id: None}
+    )
+    db.delete(db_broker)
+    db.commit()
+    return {"message": "Broker deleted"}
+
+# --- Fiscal Backpack Endpoints ---
+
+@app.get("/brokers/{broker_id}/fiscal_backpack")
+def get_fiscal_backpack(broker_id: int, db: Session = Depends(get_db)):
+    entries = db.query(db_mod.FiscalBackpackEntry).filter(
+        db_mod.FiscalBackpackEntry.broker_id == broker_id
+    ).order_by(db_mod.FiscalBackpackEntry.loss_year.asc()).all()
+    return [{"loss_year": e.loss_year, "remaining_loss": e.remaining_loss} for e in entries]
+
+@app.put("/brokers/{broker_id}/fiscal_backpack")
+def reset_fiscal_backpack(broker_id: int, db: Session = Depends(get_db)):
+    """Resetta manualmente lo zainetto fiscale (tutti gli anni) per un broker."""
+    db.query(db_mod.FiscalBackpackEntry).filter(
+        db_mod.FiscalBackpackEntry.broker_id == broker_id
+    ).delete()
+    db.commit()
+    return {"message": "Fiscal backpack reset"}
+
 @app.get("/portfolios/{portfolio_id}/transactions/", response_model=List[schemas.Transaction])
 def get_transactions(portfolio_id: int, db: Session = Depends(get_db)):
     return db.query(db_mod.Transaction).filter(db_mod.Transaction.portfolio_id == portfolio_id).order_by(db_mod.Transaction.date.desc()).all()
@@ -1037,10 +1108,37 @@ def create_transaction(portfolio_id: int, transaction: schemas.TransactionCreate
                     calc_comm = plan.max_fee
                 commission_paid = calc_comm
     
+    # Validate broker if provided
+    if transaction.broker_id:
+        broker = db.query(db_mod.Broker).filter(db_mod.Broker.id == transaction.broker_id).first()
+        if not broker:
+            raise HTTPException(status_code=400, detail="Broker not found")
+
     trans_data = transaction.model_dump()
     trans_data['commission_paid'] = commission_paid
     trans_data['portfolio_id'] = portfolio_id
-    
+
+    # Calculate Tobin tax if a plan is provided for BUY
+    tobin_tax_paid = 0.0
+    if transaction.tobin_tax_plan_id and transaction.type == "BUY":
+        tax_plan = db.query(db_mod.TaxPlan).filter(
+            db_mod.TaxPlan.id == transaction.tobin_tax_plan_id,
+            db_mod.TaxPlan.type == "tobin"
+        ).first()
+        if tax_plan:
+            trade_value_in_base = (transaction.price * transaction.quantity) * transaction.exchange_rate
+            tobin_tax_paid = trade_value_in_base * (tax_plan.rate / 100.0)
+    trans_data['tobin_tax_paid'] = tobin_tax_paid
+
+    # For DIVIDEND: resolve rate from dividend_tax_plan_id if provided
+    if transaction.type == "DIVIDEND" and transaction.dividend_tax_plan_id:
+        tax_plan = db.query(db_mod.TaxPlan).filter(
+            db_mod.TaxPlan.id == transaction.dividend_tax_plan_id,
+            db_mod.TaxPlan.type == "dividend"
+        ).first()
+        if tax_plan:
+            trans_data['tax_rate'] = tax_plan.rate
+
     db_trans = db_mod.Transaction(**trans_data)
     db.add(db_trans)
     
@@ -1065,7 +1163,7 @@ def create_transaction(portfolio_id: int, transaction: schemas.TransactionCreate
         # Cash accounting
         trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
         if db_trans.type in ["BUY", "COVER"]:
-            db_portfolio.cash_balance -= (trade_val + db_trans.commission_paid)
+            db_portfolio.cash_balance -= (trade_val + db_trans.commission_paid + db_trans.tobin_tax_paid)
         elif db_trans.type in ["SELL", "SHORT"]:
             db_portfolio.cash_balance += (trade_val - db_trans.commission_paid)
 
@@ -1093,7 +1191,7 @@ def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
     else:
         trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
         if db_trans.type in ["BUY", "COVER"]:
-            db_portfolio.cash_balance += (trade_val + db_trans.commission_paid)
+            db_portfolio.cash_balance += (trade_val + db_trans.commission_paid + db_trans.tobin_tax_paid)
         elif db_trans.type in ["SELL", "SHORT"]:
             db_portfolio.cash_balance -= (trade_val - db_trans.commission_paid)
             
@@ -1123,9 +1221,15 @@ def update_transaction(transaction_id: int, transaction: schemas.TransactionCrea
     else:
         old_trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
         if db_trans.type in ["BUY", "COVER"]:
-            db_portfolio.cash_balance += (old_trade_val + db_trans.commission_paid)
+            db_portfolio.cash_balance += (old_trade_val + db_trans.commission_paid + db_trans.tobin_tax_paid)
         elif db_trans.type in ["SELL", "SHORT"]:
             db_portfolio.cash_balance -= (old_trade_val - db_trans.commission_paid)
+
+    # Validate new broker_id if provided
+    if transaction.broker_id:
+        broker = db.query(db_mod.Broker).filter(db_mod.Broker.id == transaction.broker_id).first()
+        if not broker:
+            raise HTTPException(status_code=400, detail="Broker not found")
 
     # 2. Calculate new commission if a plan is provided
     commission_paid = 0.0
@@ -1144,8 +1248,30 @@ def update_transaction(transaction_id: int, transaction: schemas.TransactionCrea
                     calc_comm = plan.max_fee
                 commission_paid = calc_comm
 
+    # Calculate new Tobin tax if a plan is provided for BUY
+    tobin_tax_paid = 0.0
+    if transaction.tobin_tax_plan_id and transaction.type == "BUY":
+        tax_plan = db.query(db_mod.TaxPlan).filter(
+            db_mod.TaxPlan.id == transaction.tobin_tax_plan_id,
+            db_mod.TaxPlan.type == "tobin"
+        ).first()
+        if tax_plan:
+            trade_value_in_base = (transaction.price * transaction.quantity) * transaction.exchange_rate
+            tobin_tax_paid = trade_value_in_base * (tax_plan.rate / 100.0)
+
+    # Resolve dividend tax rate from plan if provided
+    dividend_tax_rate = transaction.tax_rate
+    if transaction.dividend_tax_plan_id and transaction.type == "DIVIDEND":
+        tax_plan = db.query(db_mod.TaxPlan).filter(
+            db_mod.TaxPlan.id == transaction.dividend_tax_plan_id,
+            db_mod.TaxPlan.type == "dividend"
+        ).first()
+        if tax_plan:
+            dividend_tax_rate = tax_plan.rate
+
     # 3. Update fields
     db_trans.ticker = transaction.ticker
+    db_trans.broker_id = transaction.broker_id
     db_trans.type = transaction.type
     db_trans.date = transaction.date
     db_trans.quantity = transaction.quantity
@@ -1155,7 +1281,11 @@ def update_transaction(transaction_id: int, transaction: schemas.TransactionCrea
     db_trans.commission_plan_id = transaction.commission_plan_id
     db_trans.commission_paid = commission_paid
     db_trans.short_borrow_fee_rate = transaction.short_borrow_fee_rate
-    db_trans.tax_rate = transaction.tax_rate
+    db_trans.tax_rate = dividend_tax_rate if transaction.type == "DIVIDEND" else transaction.tax_rate
+    db_trans.tobin_tax_plan_id = transaction.tobin_tax_plan_id
+    db_trans.tobin_tax_paid = tobin_tax_paid
+    db_trans.capital_gains_tax_plan_id = transaction.capital_gains_tax_plan_id
+    db_trans.dividend_tax_plan_id = transaction.dividend_tax_plan_id
     db_trans.note = transaction.note
 
     # 4. Apply new cash impact
@@ -1167,7 +1297,7 @@ def update_transaction(transaction_id: int, transaction: schemas.TransactionCrea
         # For DIVIDEND, the tax is stored in commission_paid for reversibility
         shares = abs(db_trans.quantity)
         gross_base = db_trans.price * shares * db_trans.exchange_rate
-        tax_base = gross_base * (db_trans.tax_rate / 100.0) if (db_trans.tax_rate and db_trans.tax_rate > 0) else 0.0
+        tax_base = gross_base * (dividend_tax_rate / 100.0) if (dividend_tax_rate and dividend_tax_rate > 0) else 0.0
         db_trans.commission_paid = tax_base
         if db_trans.quantity >= 0:
             db_portfolio.cash_balance += (gross_base - tax_base)
@@ -1176,7 +1306,7 @@ def update_transaction(transaction_id: int, transaction: schemas.TransactionCrea
     else:
         new_trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
         if db_trans.type in ["BUY", "COVER"]:
-            db_portfolio.cash_balance -= (new_trade_val + db_trans.commission_paid)
+            db_portfolio.cash_balance -= (new_trade_val + db_trans.commission_paid + db_trans.tobin_tax_paid)
         elif db_trans.type in ["SELL", "SHORT"]:
             db_portfolio.cash_balance += (new_trade_val - db_trans.commission_paid)
 

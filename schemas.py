@@ -351,8 +351,44 @@ class CommissionPlan(CommissionPlanBase):
     class Config:
         from_attributes = True
 
+class TaxPlanBase(BaseModel):
+    name: str
+    type: str  # 'tobin', 'capital_gains', 'dividend'
+    rate: float = 0.0
+    currency: str = "EUR"
+
+class TaxPlanCreate(TaxPlanBase):
+    pass
+
+class TaxPlan(TaxPlanBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+class FiscalBackpackEntryOut(BaseModel):
+    loss_year: int
+    remaining_loss: float
+
+    class Config:
+        from_attributes = True
+
+class BrokerBase(BaseModel):
+    name: str
+
+class BrokerCreate(BrokerBase):
+    pass
+
+class Broker(BrokerBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
 class TransactionBase(BaseModel):
     portfolio_id: Optional[int] = None
+    broker_id: Optional[int] = None
     ticker: Optional[str] = None
     type: str
     date: datetime
@@ -364,6 +400,11 @@ class TransactionBase(BaseModel):
     commission_paid: float = 0.0
     short_borrow_fee_rate: float = 0.0
     tax_rate: float = 0.0
+    tobin_tax_plan_id: Optional[int] = None
+    tobin_tax_paid: float = 0.0
+    capital_gains_tax_plan_id: Optional[int] = None
+    capital_gains_tax_paid: float = 0.0
+    dividend_tax_plan_id: Optional[int] = None
     note: Optional[str] = None
 
 class TransactionCreate(TransactionBase):

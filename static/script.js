@@ -7765,6 +7765,7 @@ let activePortfolioBaseCurrency = 'EUR';
 let commissionPlans = [];
 let portfoliosMap = new Map();
 let currentTransactions = [];
+let currentBrokers = [];
 let posSortState = { key: null, dir: 'asc' };
 let histSortState = { key: null, dir: 'asc' };
 let activePortfolioTotalValue = 0;
@@ -7781,6 +7782,9 @@ let refreshTimerRunning = false;
 async function initPortfolioView() {
     await loadPortfolios();
     await loadCommissionPlans();
+    await loadTaxPlanDropdowns();
+    await loadBrokersList();
+    await loadBrokerDropdowns();
     const select = document.getElementById('portfolio-select');
     if (select && !select.value && select.options.length > 1) {
         select.value = select.options[1].value;
@@ -7954,6 +7958,269 @@ async function deleteCommissionPlan(id) {
     }
 }
 
+// --- Tax Plan Management ---
+let taxPlans = [];
+let activeTaxType = 'tobin';
+
+async function loadTaxPlans(type) {
+    try {
+        const qs = type ? `?type=${type}` : '';
+        const response = await fetch(`/tax_plans/${qs}`);
+        return await response.json();
+    } catch (err) {
+        console.error("Error loading tax plans:", err);
+        return [];
+    }
+}
+
+function renderTaxPlansTable() {
+    const tbody = document.getElementById('tax-plans-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    const filtered = taxPlans.filter(p => p.type === activeTaxType);
+    filtered.forEach(plan => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td style="padding: 5px;">${plan.name}</td>
+            <td style="padding: 5px;">${plan.type}</td>
+            <td style="padding: 5px; text-align: right;">${plan.rate}%</td>
+            <td style="padding: 5px; text-align: center;">
+                <button class="header-btn danger small" onclick="deleteTaxPlan(${plan.id})">Elimina</button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+    const label = document.getElementById('tax-active-type-label');
+    if (label) {
+        const names = { tobin: 'Tobin Tax', capital_gains: 'Capital Gains', dividend: 'Dividendi' };
+        label.innerHTML = `Tipo attivo: <strong>${names[activeTaxType] || activeTaxType}</strong>`;
+    }
+}
+
+function switchTaxTab(type) {
+    activeTaxType = type;
+    document.querySelectorAll('.tax-tab-btn').forEach(btn => {
+        const isActive = btn.dataset.taxType === type;
+        btn.style.background = isActive ? 'var(--accent-color)' : 'var(--bg-color)';
+        btn.style.color = isActive ? '#fff' : 'var(--text-color)';
+        btn.style.border = isActive ? 'none' : '1px solid var(--border-color)';
+    });
+    loadAndRenderTaxPlans();
+}
+window.switchTaxTab = switchTaxTab;
+
+async function loadAndRenderTaxPlans() {
+    taxPlans = await loadTaxPlans();
+    renderTaxPlansTable();
+}
+
+async function deleteTaxPlan(id) {
+    if (!confirm("Sei sicuro di voler eliminare questo piano fiscale?")) return;
+    try {
+        await fetch(`/tax_plans/${id}`, { method: 'DELETE' });
+        loadAndRenderTaxPlans();
+        loadTaxPlanDropdowns();
+    } catch (err) {
+        alert("Errore nell'eliminazione: " + err.message);
+    }
+}
+
+async function loadTaxPlanDropdowns() {
+    // Tobin tax dropdown in transaction modal
+    const tobinPlans = await loadTaxPlans('tobin');
+    const tobinSelect = document.getElementById('trans-tobin-tax-plan');
+    if (tobinSelect) {
+        tobinSelect.innerHTML = '<option value="">Nessuna (0.00)</option>';
+        tobinPlans.forEach(plan => {
+            const opt = document.createElement('option');
+            opt.value = plan.id;
+            opt.textContent = `${plan.name} [${plan.rate}%]`;
+            tobinSelect.appendChild(opt);
+        });
+    }
+
+    // Capital gains tax dropdown in transaction modal
+    const cgPlans = await loadTaxPlans('capital_gains');
+    const cgSelect = document.getElementById('trans-cg-tax-plan');
+    if (cgSelect) {
+        cgSelect.innerHTML = '<option value="">Nessuna (0.00)</option>';
+        cgPlans.forEach(plan => {
+            const opt = document.createElement('option');
+            opt.value = plan.id;
+            opt.textContent = `${plan.name} [${plan.rate}%]`;
+            cgSelect.appendChild(opt);
+        });
+    }
+
+    // Dividend tax plan dropdown in dividend modal
+    const divPlans = await loadTaxPlans('dividend');
+    const divSelect = document.getElementById('div-tax-plan');
+    if (divSelect) {
+        divSelect.innerHTML = '<option value="">Seleziona piano...</option>';
+        divPlans.forEach(plan => {
+            const opt = document.createElement('option');
+            opt.value = plan.id;
+            opt.textContent = `${plan.name} [${plan.rate}%]`;
+            divSelect.appendChild(opt);
+        });
+    }
+}
+
+// Show/hide type-specific rows based on transaction type
+function updateTransTypeUI(type) {
+    document.getElementById('trans-short-fee-row').style.display = type === 'SHORT' ? 'flex' : 'none';
+    document.getElementById('trans-tobin-tax-row').style.display = type === 'BUY' ? 'flex' : 'none';
+    document.getElementById('trans-cg-tax-row').style.display = type === 'SELL' ? 'flex' : 'none';
+}
+if (document.getElementById('trans-type')) {
+    document.getElementById('trans-type').onchange = (e) => updateTransTypeUI(e.target.value);
+}
+
+// Dividend tax plan auto-fills the rate
+if (document.getElementById('div-tax-plan')) {
+    document.getElementById('div-tax-plan').onchange = async () => {
+        const planId = document.getElementById('div-tax-plan').value;
+        if (planId) {
+            const plans = await loadTaxPlans('dividend');
+            const plan = plans.find(p => p.id == planId);
+            if (plan) {
+                document.getElementById('div-tax-rate').value = plan.rate;
+                recomputeDividendCalc();
+            }
+        }
+    };
+}
+
+// --- Tax Plan Form Submission ---
+if (document.getElementById('add-tax-plan-btn')) {
+    document.getElementById('add-tax-plan-btn').onclick = async () => {
+        const name = document.getElementById('tax-name').value;
+        const rate = parseFloat(document.getElementById('tax-rate-input').value) || 0;
+
+        if (!name) return alert("Inserisci un nome per il piano fiscale");
+        if (rate <= 0) return alert("Inserisci un'aliquota maggiore di 0");
+
+        try {
+            const response = await fetch('/tax_plans/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name, type: activeTaxType, rate, currency: 'EUR' })
+            });
+            if (response.ok) {
+                document.getElementById('tax-name').value = '';
+                document.getElementById('tax-rate-input').value = '';
+                loadAndRenderTaxPlans();
+                loadTaxPlanDropdowns();
+            }
+        } catch (err) {
+            alert("Errore nel salvataggio: " + err.message);
+        }
+    };
+}
+
+// --- Broker Functions ---
+
+async function loadBrokersList() {
+    try {
+        const response = await fetch('/brokers/');
+        currentBrokers = await response.json();
+    } catch (err) {
+        console.error("Error loading brokers:", err);
+        currentBrokers = [];
+    }
+}
+
+async function loadBrokerDropdowns() {
+    await loadBrokersList();
+    // Transaction modal dropdown
+    const transSelect = document.getElementById('trans-broker');
+    if (transSelect) {
+        transSelect.innerHTML = '<option value="">Seleziona broker...</option>';
+        currentBrokers.forEach(b => {
+            const opt = document.createElement('option');
+            opt.value = b.id;
+            opt.textContent = b.name;
+            transSelect.appendChild(opt);
+        });
+    }
+    // Dividend modal dropdown
+    const divSelect = document.getElementById('div-broker');
+    if (divSelect) {
+        divSelect.innerHTML = '<option value="">Seleziona broker...</option>';
+        currentBrokers.forEach(b => {
+            const opt = document.createElement('option');
+            opt.value = b.id;
+            opt.textContent = b.name;
+            divSelect.appendChild(opt);
+        });
+    }
+}
+
+async function loadAndRenderBrokers() {
+    await loadBrokersList();
+    const tbody = document.getElementById('broker-body');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+    currentBrokers.forEach(b => {
+        const tr = document.createElement('tr');
+        tr.style.borderBottom = '1px solid var(--border-color)';
+        tr.innerHTML = `
+            <td style="padding: 6px;">${b.name}</td>
+            <td style="text-align: center; padding: 6px;">
+                <button class="header-btn danger small" onclick="deleteBroker(${b.id})">Elimina</button>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+async function deleteBroker(id) {
+    if (!confirm("Eliminare questo broker? Le transazioni collegate verranno scollegate.")) return;
+    try {
+        const resp = await fetch(`/brokers/${id}`, { method: 'DELETE' });
+        if (resp.ok) {
+            await loadAndRenderBrokers();
+            await loadBrokerDropdowns();
+        } else {
+            const err = await resp.json();
+            alert("Errore: " + (err.detail || "Eliminazione fallita"));
+        }
+    } catch (err) {
+        alert("Errore nella richiesta: " + err.message);
+    }
+}
+
+if (document.getElementById('manage-brokers-btn')) {
+    document.getElementById('manage-brokers-btn').onclick = () => {
+        loadAndRenderBrokers();
+        document.getElementById('broker-modal').classList.remove('hidden');
+    };
+}
+
+if (document.getElementById('add-broker-btn')) {
+    document.getElementById('add-broker-btn').onclick = async () => {
+        const name = document.getElementById('broker-name').value.trim();
+        if (!name) return alert("Inserisci un nome per il broker");
+        try {
+            const resp = await fetch('/brokers/', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name })
+            });
+            if (resp.ok) {
+                document.getElementById('broker-name').value = '';
+                await loadAndRenderBrokers();
+                await loadBrokerDropdowns();
+            } else {
+                const err = await resp.json();
+                alert("Errore: " + (err.detail || "Creazione fallita"));
+            }
+        } catch (err) {
+            alert("Errore nella richiesta: " + err.message);
+        }
+    };
+}
+
 // Global auto-refresh timer (works across Portfolio / Grafico / Screening views)
 async function autoRefreshAction() {
     const statusEl = document.getElementById('refresh-countdown');
@@ -8112,6 +8379,7 @@ async function refreshPortfolio() {
         const response = await fetch(`/portfolios/${activePortfolioId}/summary`);
         const data = await response.json();
         renderPortfolioSummary(data);
+        await loadBrokerDropdowns();
         loadTransactionsHistory();
     } catch (err) {
         console.error("Error refreshing portfolio:", err);
@@ -8156,6 +8424,53 @@ function renderPortfolioSummary(data) {
     if (divEl) {
         divEl.textContent = `${netDiv.toFixed(2)} ${curr}`;
         divEl.style.color = netDiv >= 0 ? '#fbc02d' : '#e57373';
+    }
+
+    // Fiscal Backpack (per broker)
+    const bpByBroker = summary.fiscal_backpack_by_broker || [];
+    const bpTotal = summary.fiscal_backpack_total ?? 0;
+    const bpEl = document.getElementById('portfolio-backpack-display');
+    if (bpEl) {
+        bpEl.textContent = `${bpTotal.toFixed(2)} ${curr}`;
+        bpEl.style.color = bpTotal > 0 ? '#ff8a65' : 'var(--text-secondary)';
+    }
+    const bpDetail = document.getElementById('portfolio-backpack-detail');
+    if (bpDetail) {
+        if (bpByBroker.length > 0) {
+            bpDetail.textContent = bpByBroker.map(b =>
+                `${b.broker_name}: ${b.by_year.map(e => `${e.loss_year}: ${e.remaining_loss.toFixed(2)}`).join(', ')}`
+            ).join(' | ');
+        } else {
+            bpDetail.textContent = 'Nessuna perdita residua';
+        }
+    }
+
+    // Tax info
+    const totalTax = summary.total_tax_paid ?? 0;
+    const cgTax = summary.total_capital_gains_tax ?? 0;
+    const divTaxPlan = summary.total_dividend_tax_from_plans ?? 0;
+    const tobinTax = summary.total_tobin_tax_paid ?? 0;
+    const taxEl = document.getElementById('portfolio-tax-display');
+    if (taxEl) {
+        taxEl.textContent = `${totalTax.toFixed(2)} ${curr}`;
+        taxEl.style.color = totalTax > 0 ? '#e57373' : 'var(--text-secondary)';
+    }
+    const taxDetail = document.getElementById('portfolio-tax-detail');
+    if (taxDetail) {
+        const parts = [];
+        if (tobinTax > 0) parts.push(`Tobin: ${tobinTax.toFixed(2)}`);
+        if (cgTax > 0) parts.push(`CG: ${cgTax.toFixed(2)}`);
+        if (divTaxPlan > 0) parts.push(`Div: ${divTaxPlan.toFixed(2)}`);
+        if (summary.total_dividend_tax > 0) parts.push(`Ritenuta: ${summary.total_dividend_tax.toFixed(2)}`);
+        taxDetail.textContent = parts.length > 0 ? parts.join(' | ') : 'Nessuna tassa';
+    }
+
+    // After-tax realized P&L
+    const afterTax = summary.after_tax_realized_pl ?? summary.total_realized_pl;
+    const atEl = document.getElementById('portfolio-aftertax-display');
+    if (atEl) {
+        atEl.textContent = `${afterTax.toFixed(2)} ${curr}`;
+        atEl.style.color = afterTax >= 0 ? 'var(--up-color)' : 'var(--down-color)';
     }
 
     currentPortfolioPositions = data.positions;
@@ -8334,6 +8649,7 @@ function renderPortfolioPositions() {
             <td class="instrument-col" style="color: ${pctValColor}; font-weight: bold;">${isSignal ? (pos.signal_return_pct != null ? (pos.signal_return_pct >= 0 ? '+' : '') + pos.signal_return_pct.toFixed(2) + '%' : '—') : (initialVal === 0 ? '—' : pctVal.toFixed(2) + '%')}</td>
             <td style="color: ${pos.daily_change_pct != null && pos.daily_change_pct >= 0 ? 'var(--up-color)' : 'var(--down-color)'}; font-weight: bold;">${pos.daily_change_pct != null ? (pos.daily_change_pct >= 0 ? '+' : '') + pos.daily_change_pct.toFixed(2) + '%' : '—'}</td>
             <td style="font-weight: bold;">${isSignal ? '—' : weight.toFixed(1) + '%'}</td>
+            <td>${(pos.total_tobin_tax ?? 0).toFixed(2) + ' ' + curr}</td>
             <td>${pos._noteBtnHtml || '—'}</td>
             <td>
                 <button class="header-btn small" style="background: ${isSignal ? 'rgba(251,192,45,0.4)' : (pos.quantity < 0 ? '#e57373' : '#fbc02d')}; color: ${isSignal ? 'var(--text-secondary)' : (pos.quantity < 0 ? '#fff' : '#1a1a1a')};" title="${isSignal ? 'Dividendo (posizione segnale)' : (pos.quantity < 0 ? 'Dividendo su short (costo)' : 'Aggiungi Dividendo')}" onclick="event.stopPropagation(); openDividendModal('${pos.ticker}', ${pos.quantity}, '${pos.currency || curr}', ${pos.quantity < 0 ? -1 : 1})">💰</button>
@@ -8390,7 +8706,7 @@ function updateSortArrows(rowId, sortState) {
         const ths = row.querySelectorAll('th.sortable-th');
         const keys = ['ticker','date','days','quantity','pmc','pmc_instrument','current_price','current_value','current_value_instrument','unrealized_pl','unrealized_pl_instrument','weight'];
         if (rowId === 'hist-header-row') {
-            const hkeys = ['date','ticker','type','quantity','price','cvBase','cvVal','currency','fx','comm'];
+            const hkeys = ['date','ticker','type','quantity','price','cvBase','cvVal','currency','fx','comm','tobin_tax','cg_tax','note'];
             const idx = hkeys.indexOf(sortState.key);
             if (idx >= 0 && ths[idx]) ths[idx].querySelector('.sort-arrow').textContent = sortState.dir === 'asc' ? ' ▲' : ' ▼';
         } else {
@@ -8479,6 +8795,8 @@ function renderPortfolioHistory() {
             if (k === 'currency') { va = a.instrument_currency || ''; vb = b.instrument_currency || ''; return va.localeCompare(vb) * d; }
             if (k === 'cvBase') { va = (a.price||0)*(a.quantity||0)*(a.exchange_rate||1); vb = (b.price||0)*(b.quantity||0)*(b.exchange_rate||1); return (va-vb)*d; }
             if (k === 'cvVal') { va = (a.price||0)*(a.quantity||0); vb = (b.price||0)*(b.quantity||0); return (va-vb)*d; }
+            if (k === 'tobin_tax') { va = a.tobin_tax_paid ?? 0; vb = b.tobin_tax_paid ?? 0; return (va-vb)*d; }
+            if (k === 'cg_tax') { va = a.capital_gains_tax_paid ?? 0; vb = b.capital_gains_tax_paid ?? 0; return (va-vb)*d; }
             va = a[k] ?? 0; vb = b[k] ?? 0;
             return (va - vb) * d;
         });
@@ -8500,6 +8818,7 @@ function renderPortfolioHistory() {
             const histNoteEnc = t.note ? encodeURIComponent(t.note).replace(/'/g,'%27') : '';
             const histNoteHtml = t.note ? `<button class="header-btn small" style="background: var(--accent-color);" onclick="event.stopPropagation(); openNoteModal(decodeURIComponent('${histTickerEnc}'), decodeURIComponent('${histNoteEnc}'))">👁</button>` : '—';
             
+            const brokerName = t.broker_id ? (currentBrokers.find(b => b.id === t.broker_id)?.name || '—') : '—';
             tr.innerHTML = `
                 <td>${formattedDate}</td>
                 <td>${tickerHtml}</td>
@@ -8510,7 +8829,10 @@ function renderPortfolioHistory() {
                 <td class="instrument-col">${cvVal.toFixed(2)}</td>
                 <td class="instrument-col">${t.instrument_currency}</td>
                 <td class="instrument-col">${t.exchange_rate.toFixed(4)}</td>
+                <td>${brokerName}</td>
                 <td>${t.commission_paid.toFixed(2)}</td>
+                <td>${(t.tobin_tax_paid ?? 0).toFixed(2)}</td>
+                <td>${(t.capital_gains_tax_paid ?? 0).toFixed(2)}</td>
                 <td>${histNoteHtml}</td>
                 <td>
                     <button class="header-btn secondary small" style="margin-right: 4px;" onclick="openEditTransactionModal(${t.id})">Mod</button>
@@ -8589,6 +8911,13 @@ if (document.getElementById('manage-commission-plans-btn')) {
     };
 }
 
+if (document.getElementById('manage-tax-plans-btn')) {
+    document.getElementById('manage-tax-plans-btn').onclick = () => {
+        switchTaxTab('tobin');
+        document.getElementById('tax-plans-modal').classList.remove('hidden');
+    };
+}
+
 function openNoteModal(ticker, note) {
     document.getElementById('note-modal-title').textContent = ticker ? `Nota — ${ticker}` : 'Nota Transazione';
     const content = document.getElementById('note-modal-content');
@@ -8649,7 +8978,11 @@ function closePositionModal(ticker, quantity, currentPrice) {
     else document.getElementById('trans-date').value = val;
     
     document.getElementById('trans-note').value = '';
-    document.getElementById('trans-short-fee-row').style.display = 'none';
+    document.getElementById('trans-commission-plan').value = '';
+    document.getElementById('trans-tobin-tax-plan').value = '';
+    document.getElementById('trans-cg-tax-plan').value = '';
+    document.getElementById('trans-broker').value = '';
+    updateTransTypeUI(transType.value);
 }
 window.closePositionModal = closePositionModal;
 
@@ -8714,6 +9047,7 @@ function openEditTransactionModal(id) {
         
         document.getElementById('trans-type').value = t.type;
         document.getElementById('trans-ticker').value = t.ticker || '';
+        document.getElementById('trans-broker').value = t.broker_id || '';
         
         const d = new Date(t.date);
         d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
@@ -8729,7 +9063,9 @@ function openEditTransactionModal(id) {
         document.getElementById('trans-short-fee').value = t.short_borrow_fee_rate || 0;
         document.getElementById('trans-note').value = t.note || '';
         
-        document.getElementById('trans-short-fee-row').style.display = t.type === 'SHORT' ? 'flex' : 'none';
+        document.getElementById('trans-tobin-tax-plan').value = t.tobin_tax_plan_id || '';
+        document.getElementById('trans-cg-tax-plan').value = t.capital_gains_tax_plan_id || '';
+        updateTransTypeUI(t.type);
         
         document.getElementById('transaction-modal').classList.remove('hidden');
     }
@@ -8795,7 +9131,11 @@ if (document.getElementById('add-transaction-btn')) {
         if (transDatePickr) transDatePickr.setDate(val, false);
         else document.getElementById('trans-date').value = val;
         if (activeTicker) document.getElementById('trans-ticker').value = activeTicker;
-        document.getElementById('trans-short-fee-row').style.display = 'none';
+        document.getElementById('trans-commission-plan').value = '';
+        document.getElementById('trans-tobin-tax-plan').value = '';
+        document.getElementById('trans-cg-tax-plan').value = '';
+        document.getElementById('trans-broker').value = '';
+        updateTransTypeUI('BUY');
         document.getElementById('trans-note').value = '';
         const cvInput = document.getElementById('trans-cv');
         if (cvInput) cvInput.value = '';
@@ -8819,7 +9159,11 @@ if (document.getElementById('close-position-top-btn')) {
         if (transDatePickr) transDatePickr.setDate(val, false);
         else document.getElementById('trans-date').value = val;
         if (activeTicker) document.getElementById('trans-ticker').value = activeTicker;
-        document.getElementById('trans-short-fee-row').style.display = 'none';
+        document.getElementById('trans-commission-plan').value = '';
+        document.getElementById('trans-tobin-tax-plan').value = '';
+        document.getElementById('trans-cg-tax-plan').value = '';
+        document.getElementById('trans-broker').value = '';
+        updateTransTypeUI('SELL');
         document.getElementById('trans-note').value = '';
         
         updateAutomaticExchangeRate();
@@ -8919,16 +9263,20 @@ if (document.getElementById('save-transaction-btn')) {
         
         const ticker = document.getElementById('trans-ticker').value.toUpperCase();
         const type = document.getElementById('trans-type').value;
+        const broker_id = document.getElementById('trans-broker')?.value || null;
         const date = document.getElementById('trans-date').value;
         const quantity = parseFloat(document.getElementById('trans-qty').value);
         const price = parseFloat(document.getElementById('trans-price').value);
         const instrument_currency = document.getElementById('trans-currency').value;
         const exchange_rate = parseFloat(document.getElementById('trans-fx').value) || 1.0;
         const commission_plan_id = document.getElementById('trans-commission-plan').value || null;
+        const tobin_tax_plan_id = document.getElementById('trans-tobin-tax-plan')?.value || null;
+        const capital_gains_tax_plan_id = document.getElementById('trans-cg-tax-plan')?.value || null;
         const short_borrow_fee_rate = parseFloat(document.getElementById('trans-short-fee').value) || 0;
         const note = document.getElementById('trans-note').value || '';
 
         if (!ticker || isNaN(quantity) || isNaN(price)) return alert("Compila tutti i campi obbligatori");
+        if (!broker_id) return alert("Seleziona un broker per la transazione");
 
         const url = editingTransactionId ? `/transactions/${editingTransactionId}` : `/portfolios/${activePortfolioId}/transactions/`;
         const method = editingTransactionId ? 'PUT' : 'POST';
@@ -8939,9 +9287,12 @@ if (document.getElementById('save-transaction-btn')) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     portfolio_id: parseInt(activePortfolioId),
+                    broker_id: broker_id ? parseInt(broker_id) : null,
                     ticker, type, date, quantity, price, 
                     instrument_currency, exchange_rate, 
                     commission_plan_id: commission_plan_id ? parseInt(commission_plan_id) : null,
+                    tobin_tax_plan_id: tobin_tax_plan_id ? parseInt(tobin_tax_plan_id) : null,
+                    capital_gains_tax_plan_id: capital_gains_tax_plan_id ? parseInt(capital_gains_tax_plan_id) : null,
                     short_borrow_fee_rate,
                     note
                 })
@@ -8959,11 +9310,7 @@ if (document.getElementById('save-transaction-btn')) {
     };
 }
 
-if (document.getElementById('trans-type')) {
-    document.getElementById('trans-type').onchange = (e) => {
-        document.getElementById('trans-short-fee-row').style.display = e.target.value === 'SHORT' ? 'flex' : 'none';
-    };
-}
+
 
 if (document.getElementById('fetch-price-btn')) {
     document.getElementById('fetch-price-btn').onclick = async () => {
@@ -9126,6 +9473,8 @@ function recomputeDividendCalc() {
     }
     const taxRow = document.getElementById('div-tax-rate-row');
     if (taxRow) taxRow.style.display = applyTax ? 'flex' : 'none';
+    const taxPlanRow = document.getElementById('div-tax-plan-row');
+    if (taxPlanRow) taxPlanRow.style.display = applyTax ? 'flex' : 'none';
     updateDividendDirectionLabel();
 }
 
@@ -9144,6 +9493,7 @@ function resetDividendModal() {
     document.getElementById('div-qty').value = '';
     document.getElementById('div-apply-tax').checked = true;
     document.getElementById('div-tax-rate').value = '26';
+    document.getElementById('div-tax-plan').value = '';
     document.getElementById('div-note').value = '';
     window._dividendDirectionSign = 1;
     setDividendMode('total');
@@ -9253,6 +9603,9 @@ if (document.getElementById('save-dividend-btn')) {
         const exchange_rate = parseFloat(document.getElementById('div-fx').value) || 1.0;
         const applyTax = document.getElementById('div-apply-tax').checked;
         const tax_rate = applyTax ? (parseFloat(document.getElementById('div-tax-rate').value) || 0) : 0;
+        const dividend_tax_plan_id = document.getElementById('div-tax-plan').value || null;
+        const div_broker_id = document.getElementById('div-broker')?.value || null;
+        if (!div_broker_id) return alert("Seleziona un broker per il dividendo");
         const note = document.getElementById('div-note').value || '';
 
         const url = dividendEditingId
@@ -9266,6 +9619,7 @@ if (document.getElementById('save-dividend-btn')) {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     portfolio_id: parseInt(activePortfolioId),
+                    broker_id: div_broker_id ? parseInt(div_broker_id) : null,
                     ticker,
                     type: 'DIVIDEND',
                     date,
@@ -9277,6 +9631,7 @@ if (document.getElementById('save-dividend-btn')) {
                     commission_paid: 0.0,
                     short_borrow_fee_rate: 0.0,
                     tax_rate,
+                    dividend_tax_plan_id: dividend_tax_plan_id ? parseInt(dividend_tax_plan_id) : null,
                     note
                 })
             });
