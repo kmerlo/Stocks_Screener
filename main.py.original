@@ -81,25 +81,9 @@ async def global_exception_handler(request, exc):
         content={"detail": str(exc)}
     )
 
-# Dependency to get DB session (backward compatibility - uses config db)
+# Dependency to get DB session
 def get_db():
-    db = db_mod.SessionLocalConfig()
-    try:
-        yield db
-    finally:
-        db.close()
-
-# Dependency to get config DB session
-def get_config_db():
-    db = db_mod.SessionLocalConfig()
-    try:
-        yield db
-    finally:
-        db.close()
-
-# Dependency to get market DB session
-def get_market_db():
-    db = db_mod.SessionLocalMarket()
+    db = db_mod.SessionLocal()
     try:
         yield db
     finally:
@@ -458,7 +442,22 @@ def get_ticker_data(symbol: str, db: Session = Depends(get_db)):
     return data
 
 @app.post("/screening/run", response_model=List[schemas.ModularScreeningResult])
-def run_modular_screening(request: schemas.ScreeningRequest, db: Session = Depends(get_market_db)):
+def run_modular_screening(request: schemas.ScreeningRequest, db: Session = Depends(get_db)):
+    if request.symbols:
+        tickers = request.symbols
+    else:
+        if request.list_id == 0:
+            # Aggregate all tickers from all lists, deduplicating by symbol
+            db_tickers = db.query(db_mod.Ticker).all()
+            seen = set()
+            tickers = []
+            for t in db_tickers:
+                if t.symbol not in seen:
+                    seen.add(t.symbol)
+                    tickers.append(t)
+        else:
+            tickers = db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == request.list_id).all()
+    
     results = finance_logic.run_modular_screening(db, tickers, request.roc_periods)
 
     # Enrich results with company name from DB
@@ -619,7 +618,23 @@ def delete_screening_column(column_id: int, db: Session = Depends(get_db)):
     return {"message": "Column deleted"}
 
 @app.post("/screening/run-dynamic", response_model=List[schemas.ModularScreeningResult])
-def run_dynamic_screening(request: schemas.DynamicScreeningRequest, db: Session = Depends(get_market_db)):
+def run_dynamic_screening(request: schemas.DynamicScreeningRequest, db: Session = Depends(get_db)):
+    if request.symbols:
+        tickers = request.symbols
+    else:
+        if request.list_id == 0:
+            db_tickers = db.query(db_mod.Ticker).all()
+            seen = set()
+            tickers = []
+            for t in db_tickers:
+                if t.symbol not in seen:
+                    seen.add(t.symbol)
+                    tickers.append(t)
+        else:
+            tickers = db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == request.list_id).all()
+            
+    # request.columns is List[TemplateIndicatorBase]
+    cols = [c.model_dump() for c in request.columns]
     results = finance_logic.run_dynamic_screening(db, tickers, cols)
 
     # Enrich results with company name from DB
@@ -835,18 +850,18 @@ def get_gsheet_data(spreadsheet_name: str = "Investing"):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/tickers/{symbol}/fundamentals/historical", response_model=Optional[schemas.HistoricalFundamentalData])
-def get_historical_ticker_fundamentals(symbol: str, date: str, db: Session = Depends(get_market_db)):
+def get_historical_ticker_fundamentals(symbol: str, date: str, db: Session = Depends(get_db)):
     fund = finance_logic.get_historical_fundamental_data(db, symbol, date)
     if not fund:
         raise HTTPException(status_code=404, detail=f"Historical fundamental data not found for {symbol} on date {date}")
     return fund
 
 @app.get("/tickers/{symbol}/fundamentals", response_model=Optional[schemas.FundamentalData])
-def get_ticker_fundamentals(symbol: str, db: Session = Depends(get_market_db)):
+def get_ticker_fundamentals(symbol: str, db: Session = Depends(get_db)):
     return finance_logic.get_fundamental_data(db, symbol)
 
 @app.post("/tickers/{symbol}/fundamentals/update", response_model=schemas.FundamentalData)
-def update_ticker_fundamentals(symbol: str, db: Session = Depends(get_market_db)):
+def update_ticker_fundamentals(symbol: str, db: Session = Depends(get_db)):
     db_fund = finance_logic.update_fundamental_data(db, symbol)
     if not db_fund:
         raise HTTPException(status_code=404, detail=f"Fundamental data not found for {symbol}")
@@ -1438,7 +1453,7 @@ def get_fx_rate(base_currency: str, instrument_currency: str, date: str):
     return {"rate": rate}
 
 @app.get("/ticker_price")
-def get_ticker_price(symbol: str, date: str, db: Session = Depends(get_market_db)):
+def get_ticker_price(symbol: str, date: str, db: Session = Depends(get_db)):
     """Restituisce il prezzo di chiusura più vicino alla data richiesta dal DB price_data."""
     import datetime
     try:
@@ -1462,50 +1477,6 @@ def get_ticker_price(symbol: str, date: str, db: Session = Depends(get_market_db
     if rec:
         return {"price": rec.close}
     return {"price": None}
-
-@app.post("/admin/git-commit")
-def git_commit_endpoint(message: Optional[str] = None):
-    """Commit manuale di config.db nel repo Git."""
-    try:
-        import subprocess
-        from datetime import datetime
-        
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M")
-        commit_message = message or f"auto: config snapshot {ts}"
-        
-        # Get the repository root (assuming we're in it)
-        repo_root = os.path.dirname(os.path.abspath(__file__))
-        
-        # Add only config.db
-        subprocess.run(["git", "add", "config.db"], cwd=repo_root, check=True, capture_output=True)
-        
-        # Check if there are changes to commit
-        diff_result = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=repo_root, capture_output=True)
-        if diff_result.returncode == 0:
-            return {"committed": False, "message": "No changes to commit"}
-        
-        # Commit the changes
-        result = subprocess.run(
-            ["git", "commit", "-m", commit_message],
-            cwd=repo_root, capture_output=True, text=True
-        )
-        
-        if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"Git commit failed: {result.stderr}")
-        
-        # Get the commit SHA
-        sha_result = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo_root, capture_output=True, text=True)
-        commit_sha = sha_result.stdout.strip() if sha_result.returncode == 0 else None
-        
-        return {
-            "committed": True, 
-            "sha": commit_sha,
-            "message": commit_message
-        }
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=500, detail=f"Git operation failed: {e}")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Unexpected error: {e}")
 
 # Serve Frontend
 static_dir = os.path.join(os.path.dirname(__file__), "static")
