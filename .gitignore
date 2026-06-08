@@ -24,8 +24,13 @@ error_page.html
 *.log
 python-to-gsheet-*.json
 
-#Graphfy
-./graphfy-out/cache
+# Graphify
+graphify-out/
+
+# Backups and test databases
+config_test.db
+market_test.db
+config.db.backup_*
 
 #codegraph
 .codegraph
