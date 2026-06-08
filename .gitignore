@@ -15,6 +15,7 @@ wheels/
 # Databases (exclude private data)
 finance_app.db*
 market.db*
+finance_app.db.backup
 
 # Data & Debug
 CSV/*
