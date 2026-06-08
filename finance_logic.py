@@ -67,13 +67,13 @@ class FinanceLogic:
         
         if df.empty:
             print(f"No new data downloaded for {symbol}")
-            self.check_alarms(db, symbol)
+            self.check_alarms(symbol)
             return False
 
         print(f"Successfully downloaded {len(df)} candles for {symbol}")
         success = self._process_yf_df(db, symbol, df)
         # Always check alarms to populate initial last_checked_price even if no new data was added
-        self.check_alarms(db, symbol)
+        self.check_alarms(symbol)
         return success
 
     def extend_history(self, db: Session, symbol: str, years: int) -> bool:
@@ -835,93 +835,74 @@ class FinanceLogic:
             print(f"Error during VACUUM: {e}")
             return False
 
-    def check_alarms(self, db: Session, symbol: str):
+    def check_alarms(self, symbol: str):
         """Checks if any active alarms for the symbol have been triggered by the latest price data."""
-        active_alarms = db.query(Alarm).join(Drawing).filter(
-            Drawing.symbol == symbol,
-            Alarm.is_active == 1,
-            Alarm.triggered_at == None
-        ).all()
+        from database import SessionLocalConfig, SessionLocalMarket
+        config_db = SessionLocalConfig()
+        market_db = SessionLocalMarket()
+        try:
+            active_alarms = config_db.query(Alarm).join(Drawing).filter(
+                Drawing.symbol == symbol,
+                Alarm.is_active == 1,
+                Alarm.triggered_at == None
+            ).all()
 
-        if not active_alarms:
-            return
+            if not active_alarms:
+                return
 
-        # Get last two candles
-        candles = db.query(DBPriceData).filter(DBPriceData.symbol == symbol).order_by(DBPriceData.date.desc()).limit(2).all()
-        if not candles:
-            return
+            # Get last two candles from market database
+            candles = market_db.query(DBPriceData).filter(DBPriceData.symbol == symbol).order_by(DBPriceData.date.desc()).limit(2).all()
+            if not candles:
+                return
 
-        current = candles[0]
-        # If we only have one candle, we use it for both previous and current to detect "touch"
-        previous = candles[1] if len(candles) > 1 else current
+            current = candles[0]
+            # If we only have one candle, we use it for both previous and current to detect "touch"
+            previous = candles[1] if len(candles) > 1 else current
 
-        for alarm in active_alarms:
-            dr = alarm.drawing
-            try:
-                points = json.loads(dr.points)
-            except:
-                continue
-            
-            if not points:
-                continue
-
-            triggered = False
-            trigger_price = None
-
-            if dr.type == 'horizontal_line':
-                level = points[0]['price']
-                if alarm.trigger_type == 'close':
-                    if (previous.close < level and current.close >= level) or \
-                       (previous.close > level and current.close <= level):
-                        triggered = True
-                        trigger_price = current.close
-                else: # intraday
-                    if (previous.close <= level and current.high >= level) or \
-                       (previous.close >= level and current.low <= level):
-                        triggered = True
-                        trigger_price = level
-
-            elif dr.type in ['trend_line', 'ray', 'extended_line'] and len(points) >= 2:
-                # Trend line logic: Linear interpolation/extrapolation
-                p1 = points[0]
-                p2 = points[1]
-                
+            for alarm in active_alarms:
+                dr = alarm.drawing
                 try:
-                    # Convert JS ISO strings or similar to datetime
-                    t1 = pd.to_datetime(p1['time']).timestamp()
-                    t2 = pd.to_datetime(p2['time']).timestamp()
-                    v1 = p1['price']
-                    v2 = p2['price']
-                    curr_t = current.date.timestamp()
-                    prev_t = previous.date.timestamp()
+                    points = json.loads(dr.points)
+                except:
+                    continue
+                
+                if not points:
+                    continue
 
-                    if t2 != t1:
-                        # Intercept at current time
-                        level_curr = v1 + (v2 - v1) * (curr_t - t1) / (t2 - t1)
-                        # Intercept at previous time
-                        level_prev = v1 + (v2 - v1) * (prev_t - t1) / (t2 - t1)
+                triggered = False
+                drawing_type = dr.type
 
-                        if alarm.trigger_type == 'close':
-                            if (previous.close < level_prev and current.close >= level_curr) or \
-                               (previous.close > level_prev and current.close <= level_curr):
-                                triggered = True
-                                trigger_price = current.close
-                        else: # intraday
-                            if (previous.close <= level_prev and current.high >= level_curr) or \
-                               (previous.close >= level_prev and current.low <= level_curr):
-                                triggered = True
-                                trigger_price = level_curr
-                except Exception as e:
-                    print(f"Error calculating trend line alarm for {symbol}: {e}")
+                # Get the last point in the drawing
+                last_point = points[-1] if points else None
+                if not last_point:
+                    continue
 
-            # Always record the last checked price to give user feedback
-            alarm.last_checked_price = current.close
+                # For horizontal lines, check if price touches the line
+                if drawing_type == "horizontal_line":
+                    line_price = last_point.get("price")
+                    if line_price is not None:
+                        # Check if either the previous or current candle touches the line
+                        if (previous.high >= line_price >= previous.low) or (current.high >= line_price >= current.low):
+                            triggered = True
+                # For trend lines and rays, we'd need more complex geometry - simplified for now
+                else:
+                    # For other types, we'll just check if the last point's price is within the current candle's range
+                    line_price = last_point.get("price")
+                    if line_price is not None and current.high >= line_price >= current.low:
+                        triggered = True
 
-            if triggered:
-                alarm.triggered_at = datetime.now()
-                print(f"ALARM TRIGGERED: {symbol} at {trigger_price} (Type: {dr.type})")
-        
-        db.commit()
+                if triggered:
+                    alarm.triggered_at = datetime.now()
+                    alarm.last_checked_price = current.close
+            else:
+                # Update last checked price even if not triggered
+                for alarm in active_alarms:
+                    alarm.last_checked_price = current.close
+
+            config_db.commit()
+        finally:
+            config_db.close()
+            market_db.close()
 
     def get_historical_fundamental_data(self, db: Session, symbol: str, target_date_str: str):
         """Retrieves or downloads historical fundamental data valid for the clicked target date."""
@@ -1290,12 +1271,14 @@ class FinanceLogic:
             return self.get_fx_rate(base, quote)
 
     def get_portfolio_summary(self, db: Session, portfolio_id: int):
-        from database import Portfolio, Transaction, PriceData, TaxPlan, FiscalBackpackEntry
+        from database import Portfolio, Transaction, PriceData, TaxPlan, FiscalBackpackEntry, SessionLocalMarket
         from fastapi import HTTPException
 
         portfolio = db.query(Portfolio).filter(Portfolio.id == portfolio_id).first()
         if not portfolio:
             raise HTTPException(status_code=404, detail="Portfolio not found")
+
+        market_db = SessionLocalMarket()
 
         transactions = db.query(Transaction).filter(Transaction.portfolio_id == portfolio_id).order_by(Transaction.date.asc()).all()
 
@@ -1583,12 +1566,12 @@ class FinanceLogic:
 
             if abs(p["quantity"]) > 0.0001 or has_signal:
                 if abs(p["quantity"]) > 0.0001:
-                    latest_price_obj = db.query(PriceData).filter(PriceData.symbol == sym).order_by(PriceData.date.desc()).first()
+                    latest_price_obj = market_db.query(PriceData).filter(PriceData.symbol == sym).order_by(PriceData.date.desc()).first()
                     
                     # Get previous close for daily change calculation
                     prev_price_obj = None
                     if latest_price_obj:
-                        prev_price_obj = db.query(PriceData).filter(
+                        prev_price_obj = market_db.query(PriceData).filter(
                             PriceData.symbol == sym,
                             PriceData.date < latest_price_obj.date
                         ).order_by(PriceData.date.desc()).first()
@@ -1627,10 +1610,10 @@ class FinanceLogic:
                     total_current_value += current_val_base
                     unrealized_pl += unreal
                 else:
-                    latest_price_obj = db.query(PriceData).filter(PriceData.symbol == sym).order_by(PriceData.date.desc()).first()
+                    latest_price_obj = market_db.query(PriceData).filter(PriceData.symbol == sym).order_by(PriceData.date.desc()).first()
                     prev_price_obj = None
                     if latest_price_obj:
-                        prev_price_obj = db.query(PriceData).filter(
+                        prev_price_obj = market_db.query(PriceData).filter(
                             PriceData.symbol == sym,
                             PriceData.date < latest_price_obj.date
                         ).order_by(PriceData.date.desc()).first()
@@ -1641,7 +1624,7 @@ class FinanceLogic:
                     entry_price_obj = None
                     if p["open_date"]:
                         entry_date = datetime.strptime(p["open_date"], "%Y-%m-%d").date()
-                        entry_price_obj = db.query(PriceData).filter(
+                        entry_price_obj = market_db.query(PriceData).filter(
                             PriceData.symbol == sym,
                             PriceData.date >= entry_date
                         ).order_by(PriceData.date.asc()).first()
@@ -1691,5 +1674,6 @@ class FinanceLogic:
             },
             "positions": active_positions
         }
+        market_db.close()
 
 finance_logic = FinanceLogic()

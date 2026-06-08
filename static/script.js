@@ -91,6 +91,8 @@ function activateChartSlot(index) {
     renderActiveIndicatorsUI();
     reattachDrawingListeners();
     if (slot.ticker) loadFundamentalData(slot.ticker);
+    // Show last candle in legend when switching slots
+    if (slot.chart) syncCrosshairListener(slot.chart, {});
     setTimeout(() => resizeDrawingCanvas(), 50);
 }
 
@@ -405,11 +407,18 @@ const syncCrosshairListener = (sourceChart, param) => {
                 // Update Legend
                 const legend = item.legend;
                 if (!legend) return;
-                if (!time) { legend.style.display = 'none'; return; }
+
+                // Fall back to last candle when cursor is not hovering
+                let effectiveTime = time;
+                if (!effectiveTime && ownerSlot.activePriceData && ownerSlot.activePriceData.length > 0) {
+                    effectiveTime = ownerSlot.activePriceData[ownerSlot.activePriceData.length - 1].time;
+                }
+
+                if (!effectiveTime) { legend.style.display = 'none'; return; }
                 legend.style.display = 'block';
 
                 if (item.isMain) {
-                    const tk = timeToStr(time);
+                    const tk = timeToStr(effectiveTime);
                     const dataMap = ownerSlot.seriesDataMap.get(ownerSlot.priceSeries);
                     const data = tk && dataMap ? dataMap.get(tk) : null;
                     if (data) {
@@ -452,7 +461,7 @@ const syncCrosshairListener = (sourceChart, param) => {
                         legend.innerHTML = html;
                     } else { legend.style.display = 'none'; }
                 } else if (item.series && item.series.length > 0) {
-                    const tk = timeToStr(time);
+                    const tk = timeToStr(effectiveTime);
                     let legendText = `<span style="color:var(--accent-color); font-weight:bold; margin-right:10px">${tk}</span>` +
                         `<span style="color:var(--accent-color); font-weight:bold">${item.type.toUpperCase()}</span>: `;
                     let hasValue = false;
@@ -1396,6 +1405,12 @@ async function updateChart(symbol) {
         }
 
         saveActiveSlotState();
+
+        // Show last candle in legend when cursor is not hovering
+        const activeSlot = chartSlots[activeChartIndex];
+        if (activeSlot && activeSlot.chart) {
+            syncCrosshairListener(activeSlot.chart, {});
+        }
     } catch (err) {
         console.error(`Error updating chart for ${symbol}:`, err);
     }
@@ -3942,9 +3957,7 @@ if (activeListSelect) {
     activeListSelect.addEventListener('change', (e) => {
         console.log("[active-list-select] Change detected:", e.target.value);
         activeListId = e.target.value;
-        if (isChartPortfolioNone()) {
-            loadListDetails(activeListId, activeView === 'monitoring');
-        }
+        loadListDetails(activeListId, activeView === 'monitoring');
     });
 } else {
     console.error("[script.js] CRITICAL: #active-list-select not found during top-level execution!");
@@ -8553,7 +8566,15 @@ async function refreshPortfolio() {
     if (!activePortfolioId) return;
     try {
         const response = await fetch(`/portfolios/${activePortfolioId}/summary`);
+        if (!response.ok) {
+            console.error("Error refreshing portfolio:", response.status, response.statusText);
+            return;
+        }
         const data = await response.json();
+        if (!data || !data.portfolio) {
+            console.error("Invalid portfolio summary response:", data);
+            return;
+        }
         renderPortfolioSummary(data);
         await loadBrokerDropdowns();
         loadTransactionsHistory();

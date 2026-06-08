@@ -13,8 +13,8 @@ wheels/
 .venv
 
 # Databases (exclude private data)
-finance_app.db
-*.db
+finance_app.db*
+market.db*
 
 # Data & Debug
 CSV/*

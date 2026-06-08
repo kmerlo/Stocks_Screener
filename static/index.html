@@ -477,8 +477,8 @@
             </div>
 
             <!-- Sheet: Base -->
-            <div id="screening-base-sheet" class="tab-content">
-                <div class="card">
+            <div id="screening-base-sheet" class="tab-content" style="flex: 1; display: flex; flex-direction: column;">
+                <div class="card" style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
                     <div
                         style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
                         <h3>Screener Base: Last Quote & 1-period ROC <span id="base-row-count"
@@ -488,19 +488,21 @@
                             <button class="run-screening-btn">Run Screening</button>
                         </div>
                     </div>
-                    <table id="screening-base-table">
-                        <thead>
-                            <tr id="screening-base-head">
-                                <th>Ticker</th>
-                                <th>Price</th>
-                                <th>Date</th>
-                                <th>ROC (1)</th>
-                            </tr>
-                        </thead>
-                        <tbody id="screening-base-body">
-                            <!-- Results will appear here -->
-                        </tbody>
-                    </table>
+                    <div class="table-scroll-wrapper" style="flex: 1; min-height: 0; max-height: none;">
+                        <table id="screening-base-table">
+                            <thead>
+                                <tr id="screening-base-head">
+                                    <th>Ticker</th>
+                                    <th>Price</th>
+                                    <th>Date</th>
+                                    <th>ROC (1)</th>
+                                </tr>
+                            </thead>
+                            <tbody id="screening-base-body">
+                                <!-- Results will appear here -->
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             </div>
 

@@ -418,7 +418,7 @@ async def upload_csv(list_id: int, file: UploadFile = File(...), db: Session = D
         raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
 
 @app.post("/tickers/{symbol}/update-data/")
-def update_ticker_data(symbol: str, years: int = None, db: Session = Depends(get_db)):
+def update_ticker_data(symbol: str, years: int = None, db: Session = Depends(get_market_db)):
     # Use the years parameter to set the period for yfinance
     period = f"{years}y" if years else "1y"
     success = finance_logic.download_and_save_data(db, symbol, period=period)
@@ -453,24 +453,45 @@ def delete_ticker_data_from(symbol: str, date: str, db: Session = Depends(get_db
         raise HTTPException(status_code=400, detail="Invalid date format. Use ISO format (YYYY-MM-DD)")
 
 @app.get("/tickers/{symbol}/data/", response_model=List[schemas.PriceData])
-def get_ticker_data(symbol: str, db: Session = Depends(get_db)):
+def get_ticker_data(symbol: str, db: Session = Depends(get_market_db)):
     data = db.query(db_mod.PriceData).filter(db_mod.PriceData.symbol == symbol).order_by(db_mod.PriceData.date.asc()).all()
     return data
 
 @app.post("/screening/run", response_model=List[schemas.ModularScreeningResult])
 def run_modular_screening(request: schemas.ScreeningRequest, db: Session = Depends(get_market_db)):
+    # Get tickers based on request - need to query from config db for ticker symbols
+    from database import SessionLocalConfig
+    config_db = SessionLocalConfig()
+    try:
+        if request.symbols:
+            ticker_objects = config_db.query(db_mod.Ticker).filter(db_mod.Ticker.symbol.in_(request.symbols)).all()
+            tickers = [t.symbol for t in ticker_objects]
+        elif request.list_id == 0:
+            ticker_objects = config_db.query(db_mod.Ticker).all()
+            tickers = [t.symbol for t in ticker_objects]
+        else:
+            ticker_objects = config_db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == request.list_id).all()
+            tickers = [t.symbol for t in ticker_objects]
+    finally:
+        config_db.close()
+    
     results = finance_logic.run_modular_screening(db, tickers, request.roc_periods)
-
-    # Enrich results with company name from DB
-    if request.symbols:
-        db_tickers = db.query(db_mod.Ticker).filter(db_mod.Ticker.symbol.in_(request.symbols)).all()
-    elif request.list_id == 0:
-        db_tickers = db.query(db_mod.Ticker).all()
-    else:
-        db_tickers = db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == request.list_id).all()
-    name_map = {t.symbol: t.name for t in db_tickers}
-    for r in results:
-        r["name"] = name_map.get(r["symbol"])
+    
+    # Enrich results with company name from DB - also need config db for this
+    config_db = SessionLocalConfig()
+    try:
+        if request.symbols:
+            db_tickers = config_db.query(db_mod.Ticker).filter(db_mod.Ticker.symbol.in_(request.symbols)).all()
+        elif request.list_id == 0:
+            db_tickers = config_db.query(db_mod.Ticker).all()
+        else:
+            db_tickers = config_db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == request.list_id).all()
+        name_map = {t.symbol: t.name for t in db_tickers}
+        for r in results:
+            r["name"] = name_map.get(r["symbol"])
+    finally:
+        config_db.close()
+    
     return results
 
 # --- Chart Indicators & Templates ---
@@ -620,19 +641,39 @@ def delete_screening_column(column_id: int, db: Session = Depends(get_db)):
 
 @app.post("/screening/run-dynamic", response_model=List[schemas.ModularScreeningResult])
 def run_dynamic_screening(request: schemas.DynamicScreeningRequest, db: Session = Depends(get_market_db)):
-    results = finance_logic.run_dynamic_screening(db, tickers, cols)
-
-    # Enrich results with company name from DB
-    if request.symbols:
-        db_tickers = db.query(db_mod.Ticker).filter(db_mod.Ticker.symbol.in_(request.symbols)).all()
-    elif request.list_id == 0:
-        db_tickers = db.query(db_mod.Ticker).all()
-    else:
-        db_tickers = db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == request.list_id).all()
+    # Get tickers based on request - need to query from config db for ticker symbols
+    from database import SessionLocalConfig
+    config_db = SessionLocalConfig()
+    try:
+        if request.symbols:
+            ticker_objects = config_db.query(db_mod.Ticker).filter(db_mod.Ticker.symbol.in_(request.symbols)).all()
+            tickers = [t.symbol for t in ticker_objects]
+        elif request.list_id == 0:
+            ticker_objects = config_db.query(db_mod.Ticker).all()
+            tickers = [t.symbol for t in ticker_objects]
+        else:
+            ticker_objects = config_db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == request.list_id).all()
+            tickers = [t.symbol for t in ticker_objects]
+    finally:
+        config_db.close()
     
-    name_map = {t.symbol: t.name for t in db_tickers}
-    for r in results:
-        r["name"] = name_map.get(r["symbol"])
+    results = finance_logic.run_dynamic_screening(db, tickers, request.roc_periods)
+    
+    # Enrich results with company name from DB - also need config db for this
+    config_db = SessionLocalConfig()
+    try:
+        if request.symbols:
+            db_tickers = config_db.query(db_mod.Ticker).filter(db_mod.Ticker.symbol.in_(request.symbols)).all()
+        elif request.list_id == 0:
+            db_tickers = config_db.query(db_mod.Ticker).all()
+        else:
+            db_tickers = config_db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == request.list_id).all()
+        name_map = {t.symbol: t.name for t in db_tickers}
+        for r in results:
+            r["name"] = name_map.get(r["symbol"])
+    finally:
+        config_db.close()
+    
     return results
 
 # --- Maintenance Endpoints ---
@@ -779,7 +820,7 @@ def set_alarm(drawing_id: int, alarm_data: schemas.AlarmCreate, db: Session = De
     db.refresh(db_alarm)
     
     # Immediately check against current latest prices for this symbol
-    finance_logic.check_alarms(db, db_drawing.symbol)
+    finance_logic.check_alarms(db_drawing.symbol)
     
     return db_alarm
 
