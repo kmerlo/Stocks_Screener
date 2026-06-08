@@ -318,7 +318,7 @@ class FinanceLogic:
                     params = {}
 
             # Generate a unique key for this indicator/params combo
-            param_str = "_".join([f"{k}{v}" for k, v in params.items()])
+            param_str = "_".join([f"{k}{'null' if v is None else v}" for k, v in params.items()])
             key = f"{ind_type}_{param_str}".lower() if param_str else ind_type.lower()
             
             try:
@@ -766,7 +766,8 @@ class FinanceLogic:
                 if all_to_add:
                     try:
                         print(f"DEBUG: Saving {len(all_to_add)} new records to DB...")
-                        db.bulk_save_objects(all_to_add)
+                        for obj in all_to_add:
+                            db.merge(obj)
                         db.commit()
                     except Exception as e:
                         print(f"Error saving screening values: {e}")

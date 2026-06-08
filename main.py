@@ -497,7 +497,7 @@ def run_modular_screening(request: schemas.ScreeningRequest, db: Session = Depen
 # --- Chart Indicators & Templates ---
 
 @app.post("/indicators/{symbol}/calculate")
-def calculate_indicators(symbol: str, request: List[schemas.IndicatorRequest], db: Session = Depends(get_db)):
+def calculate_indicators(symbol: str, request: List[schemas.IndicatorRequest], db: Session = Depends(get_market_db)):
     indicators = [ind.model_dump() for ind in request]
     return finance_logic.calculate_indicators(db, symbol, indicators)
 
@@ -657,7 +657,15 @@ def run_dynamic_screening(request: schemas.DynamicScreeningRequest, db: Session 
     finally:
         config_db.close()
     
-    results = finance_logic.run_dynamic_screening(db, tickers, request.roc_periods)
+    cols = [
+        {
+            'indicator_type': c.indicator_type,
+            'parameters': c.parameters,
+            'timeframe': c.timeframe or 'D'
+        }
+        for c in request.columns
+    ]
+    results = finance_logic.run_dynamic_screening(db, tickers, cols)
     
     # Enrich results with company name from DB - also need config db for this
     config_db = SessionLocalConfig()

@@ -663,7 +663,7 @@ async function applyTemplate(id) {
                 id: `${ind.indicator_type}_${Date.now()}_${Math.random()}`,
                 type: ind.indicator_type,
                 params: cleanParams,
-                paneIndex: ind.pane_index,
+                paneIndex: ind.pane_index ?? 0,
                 color, lineStyle, lineWidth,
                 priceLineVisible, lastValueVisible, showLegend, hidden,
                 seriesList: []
@@ -1978,7 +1978,7 @@ function renderIndicatorData(data) {
         // Construct the expected key(s) for this indicator type + params
         // Backend key: "{type}_{paramKey1}{paramValue1}_{paramKey2}{paramValue2}".lower()
         const paramStr = Object.entries(ind.params)
-            .map(([k, v]) => `${k}${v}`)
+            .map(([k, v]) => `${k}${v === null ? 'null' : v}`)
             .join('_')
             .toLowerCase();
 
@@ -2178,8 +2178,8 @@ function clearAllIndicators() {
             ind.seriesList.forEach(s => {
                 try { slot.chart.removeSeries(s); } catch (e) { }
             });
-            ind.seriesList = [];
         }
+        if (ind.seriesList) ind.seriesList = [];
     });
 
     slot.secondaryCharts.forEach(sc => {
