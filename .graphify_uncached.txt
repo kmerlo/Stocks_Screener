@@ -1,3 +1,0 @@
-AGENTS.md
-Appunti_Stocks_Screener.md
-static/index.html
