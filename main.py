@@ -1317,6 +1317,76 @@ def delete_transaction(transaction_id: int, db: Session = Depends(get_db)):
     db.commit()
     return {"message": "Transaction deleted"}
 
+@app.post("/transactions/{transaction_id}/move")
+def move_transaction(transaction_id: int, target_portfolio_id: int, db: Session = Depends(get_db)):
+    db_trans = db.query(db_mod.Transaction).filter(db_mod.Transaction.id == transaction_id).first()
+    if not db_trans:
+        raise HTTPException(status_code=404, detail="Transaction not found")
+
+    if db_trans.portfolio_id == target_portfolio_id:
+        raise HTTPException(status_code=400, detail="Transaction already belongs to this portfolio")
+
+    src_portfolio = db.query(db_mod.Portfolio).filter(db_mod.Portfolio.id == db_trans.portfolio_id).first()
+    dst_portfolio = db.query(db_mod.Portfolio).filter(db_mod.Portfolio.id == target_portfolio_id).first()
+    if not dst_portfolio:
+        raise HTTPException(status_code=404, detail="Target portfolio not found")
+
+    # 1. Reverse cash impact on source portfolio
+    if db_trans.type == "DEPOSIT":
+        src_portfolio.cash_balance -= db_trans.quantity
+    elif db_trans.type == "WITHDRAWAL":
+        src_portfolio.cash_balance += db_trans.quantity
+    elif db_trans.type == "DIVIDEND":
+        src_portfolio.cash_balance -= _compute_dividend_cash_delta(
+            db_trans.price, db_trans.quantity, db_trans.exchange_rate, db_trans.tax_rate or 0.0
+        )
+    elif db_trans.type == "COUPON":
+        shares = abs(db_trans.quantity)
+        gross_base = db_trans.price * shares * db_trans.exchange_rate
+        tax_base = db_trans.commission_paid or 0.0
+        src_portfolio.cash_balance -= (gross_base - tax_base)
+    else:
+        trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
+        if db_trans.type in ["BUY", "COVER"]:
+            src_portfolio.cash_balance += (trade_val + db_trans.commission_paid + db_trans.tobin_tax_paid)
+        elif db_trans.type in ["SELL", "SHORT"]:
+            src_portfolio.cash_balance -= (trade_val - db_trans.commission_paid)
+
+    # 2. Change portfolio_id
+    old_portfolio_id = db_trans.portfolio_id
+    db_trans.portfolio_id = target_portfolio_id
+
+    # 3. Apply cash impact on destination portfolio
+    if db_trans.type == "DEPOSIT":
+        dst_portfolio.cash_balance += db_trans.quantity
+    elif db_trans.type == "WITHDRAWAL":
+        dst_portfolio.cash_balance -= db_trans.quantity
+    elif db_trans.type == "DIVIDEND":
+        dst_portfolio.cash_balance += _compute_dividend_cash_delta(
+            db_trans.price, db_trans.quantity, db_trans.exchange_rate, db_trans.tax_rate or 0.0
+        )
+    elif db_trans.type == "COUPON":
+        shares = abs(db_trans.quantity)
+        gross_base = db_trans.price * shares * db_trans.exchange_rate
+        tax_base = db_trans.commission_paid or 0.0
+        dst_portfolio.cash_balance += (gross_base - tax_base)
+    else:
+        trade_val = (db_trans.price * db_trans.quantity) * db_trans.exchange_rate
+        if db_trans.type in ["BUY", "COVER"]:
+            dst_portfolio.cash_balance -= (trade_val + db_trans.commission_paid + db_trans.tobin_tax_paid)
+        elif db_trans.type in ["SELL", "SHORT"]:
+            dst_portfolio.cash_balance += (trade_val - db_trans.commission_paid)
+
+    db.commit()
+    db.refresh(db_trans)
+    return {
+        "message": "Transaction moved",
+        "transaction_id": db_trans.id,
+        "ticker": db_trans.ticker,
+        "from_portfolio_id": old_portfolio_id,
+        "to_portfolio_id": target_portfolio_id
+    }
+
 @app.put("/transactions/{transaction_id}", response_model=schemas.Transaction)
 def update_transaction(transaction_id: int, transaction: schemas.TransactionCreate, db: Session = Depends(get_db)):
     db_trans = db.query(db_mod.Transaction).filter(db_mod.Transaction.id == transaction_id).first()

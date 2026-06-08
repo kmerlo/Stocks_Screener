@@ -8736,6 +8736,13 @@ function renderPortfolioPositions() {
     if (!tbody) return;
     tbody.innerHTML = '';
 
+    const nPosizioni = currentPortfolioPositions.filter(p => p.quantity > 0).length;
+    const nSegnali = currentPortfolioPositions.filter(p => p.quantity === 0 || Math.abs(p.quantity) < 0.0001).length;
+    const titleEl = document.getElementById('posizioni-aperte-title');
+    if (titleEl) {
+        titleEl.textContent = `Posizioni Aperte (${nPosizioni}) — N segnali = ${nSegnali}`;
+    }
+
     const posTable = document.getElementById('portfolio-positions-table');
     const hideInst = currentPortfolioPositions.length > 0 && currentPortfolioPositions.every(p => (p.currency || activePortfolioBaseCurrency) === activePortfolioBaseCurrency);
     if (posTable) posTable.classList.toggle('hide-instrument', hideInst);
@@ -9091,6 +9098,7 @@ function renderPortfolioHistory() {
                 <td>${histNoteHtml}</td>
                 <td>
                     <button class="header-btn secondary small" style="margin-right: 4px;" onclick="openEditTransactionModal(${t.id})">Mod</button>
+                    <button class="header-btn small" style="margin-right: 4px; background: #7c4dff;" onclick="openMoveTransactionModal(${t.id})">Sposta</button>
                     <button class="header-btn danger small" onclick="deleteTransaction(${t.id})">Del</button>
                 </td>
             `;
@@ -9141,6 +9149,57 @@ async function deleteTransaction(id) {
         refreshPortfolio();
     } catch (err) {
         alert("Errore nell'eliminazione: " + err.message);
+    }
+}
+
+let _moveTransactionId = null;
+
+function openMoveTransactionModal(id) {
+    _moveTransactionId = id;
+    const t = currentTransactions.find(item => item.id === id);
+    if (!t) return;
+
+    const info = document.getElementById('move-transaction-info');
+    if (info) {
+        info.textContent = `Sposta ${t.ticker} — ${t.type} del ${new Date(t.date).toLocaleDateString('it-IT')}`;
+    }
+
+    const select = document.getElementById('move-target-portfolio');
+    if (!select) return;
+    select.innerHTML = '<option value="">Seleziona portafoglio...</option>';
+
+    portfoliosMap.forEach((name, pid) => {
+        if (pid == activePortfolioId) return;
+        const opt = document.createElement('option');
+        opt.value = pid;
+        opt.textContent = name;
+        select.appendChild(opt);
+    });
+
+    document.getElementById('move-transaction-modal').classList.remove('hidden');
+}
+
+async function confirmMoveTransaction() {
+    const select = document.getElementById('move-target-portfolio');
+    const targetId = parseInt(select.value);
+    if (!targetId) {
+        alert("Seleziona un portafoglio di destinazione.");
+        return;
+    }
+    if (!_moveTransactionId) return;
+
+    try {
+        const resp = await fetch(`/transactions/${_moveTransactionId}/move?target_portfolio_id=${targetId}`, { method: 'POST' });
+        if (!resp.ok) {
+            const err = await resp.json();
+            alert("Errore nello spostamento: " + (err.detail || resp.statusText));
+            return;
+        }
+        document.getElementById('move-transaction-modal').classList.add('hidden');
+        _moveTransactionId = null;
+        refreshPortfolio();
+    } catch (err) {
+        alert("Errore nello spostamento: " + err.message);
     }
 }
 
@@ -9573,6 +9632,7 @@ if (document.getElementById('save-new-portfolio-btn')) {
             if (response.ok) {
                 document.getElementById('create-portfolio-modal').classList.add('hidden');
                 loadPortfolios();
+                loadChartPortfolios();
             }
         } catch (err) {
             alert("Errore nel salvataggio: " + err.message);
