@@ -69,4 +69,5 @@ Se un test deve usare dati seed realistici (es. portafoglio "TestDividendi"), cr
 - `.venv/` e `*.db` in `.gitignore` (eccetto `config.db` che è versionato).
 - CSV ticker: delimitatore `;`, formato `yahoo_ticker;name`.
 - `uv.lock` committato (lockfile).
+- File di test o di appoggio temporaneo (non destinati alla produzione) vanno creati dentro `./test/`, mai nella directory principale del progetto.
 - **Vietato `db.query(...).delete()` su tabelle utente** di `config.db` in qualsiasi script di test/manutenzione. Vedi sezione "Test" sopra.
