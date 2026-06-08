@@ -30,5 +30,8 @@ python-to-gsheet-*.json
 #codegraph
 .codegraph
 
+# Test directory
+test/*.db*
+
 #agent
 .agent

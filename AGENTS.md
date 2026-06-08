@@ -36,7 +36,7 @@ Usa **uv** (non pip/poetry). Dipendenze in `pyproject.toml`, lock in `uv.lock`.
 
 Nessun framework di test (no pytest). I test sono script manuali con `requests`:
 ```bash
-uv run python test_api.py
+uv run python test/test_api.py
 ```
 
 ### Regola critica: MAI toccare `config.db` o `market.db` durante i test
