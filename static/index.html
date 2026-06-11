@@ -275,8 +275,12 @@
 
                     <!-- Style controls -->
                     <div class="toolbar-section" style="display:flex; align-items:center; gap:8px;">
-                        <input type="color" id="drawing-color-picker" value="#58a6ff" title="Colore disegno"
-                            style="width:32px;height:28px;padding:2px 3px;border-radius:4px;border:1px solid var(--border-color);background:var(--card-bg);cursor:pointer;">
+                        <span style="position:relative;display:inline-flex;align-items:center;">
+                            <input type="color" id="drawing-color-picker" value="#58a6ff" title="Colore disegno"
+                                style="width:32px;height:28px;padding:2px 3px;border-radius:4px;border:1px solid var(--border-color);background:var(--card-bg);cursor:pointer;">
+                            <button type="button" class="color-presets-btn" data-target="drawing-color-picker" title="Colori predefiniti">🎨</button>
+                            <div class="color-presets-popup" id="presets-drawing"></div>
+                        </span>
                         <input type="range" id="drawing-width-slider" min="1" max="6" step="0.5" value="1.5"
                             title="Spessore linea" style="width:70px;accent-color:var(--accent-color);">
                         <span id="drawing-width-label" style="font-size:11px;min-width:25px;">1.5px</span>
@@ -1150,7 +1154,11 @@
 
                 <div class="modal-form-row modal-visual-controls">
                     <label for="modal-color">Colore:</label>
-                    <input type="color" id="modal-color" value="#ff9800">
+                    <span style="position:relative;display:inline-flex;align-items:center;gap:4px;">
+                        <input type="color" id="modal-color" value="#ff9800">
+                        <button type="button" class="color-presets-btn" data-target="modal-color" title="Colori predefiniti">🎨</button>
+                        <div class="color-presets-popup" id="presets-modal"></div>
+                    </span>
                 </div>
 
                 <div class="modal-form-row modal-visual-controls">

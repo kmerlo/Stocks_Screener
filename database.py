@@ -102,6 +102,7 @@ class Drawing(ConfigBase):
     line_width = Column(Float)
     line_style = Column(String, default='solid')
     text = Column(String, nullable=True)
+    pane_index = Column(Integer, default=0)
     
     alarms = relationship("Alarm", back_populates="drawing", cascade="all, delete-orphan")
 
@@ -402,6 +403,17 @@ def _migrate_config():
             # Migration: add broker_id column to transactions
             try:
                 conn.execute(text("ALTER TABLE transactions ADD COLUMN broker_id INTEGER REFERENCES brokers(id)"))
+                conn.commit()
+            except Exception:
+                pass
+            # Migration: add pane_index column to drawings
+            try:
+                conn.execute(text("ALTER TABLE drawings ADD COLUMN pane_index INTEGER DEFAULT 0"))
+                conn.commit()
+            except Exception:
+                pass
+            try:
+                conn.execute(text("UPDATE drawings SET pane_index = 0 WHERE pane_index IS NULL"))
                 conn.commit()
             except Exception:
                 pass

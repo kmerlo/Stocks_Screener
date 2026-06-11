@@ -237,10 +237,11 @@ let variationDebounceTimer = null; // Debounce for variation updates
 
 // Drawing Tools State
 let currentDrawingTool = 'cursor';
-let drawings = []; // [{ type, points: [{time, price}], ticker }]
+let drawings = []; // [{ type, points: [{time, price}], ticker, paneIndex }]
 let activeDrawing = null;
 let drawingCanvas = null;
 let drawingCtx = null;
+let activePaneIndex = 0; // 0 = main chart, 1+ = subplot pane
 let lastMousePos = { x: 0, y: 0 };
 let isDragging = false;
 let dragTarget = null;
@@ -1469,10 +1470,17 @@ async function updateChart(symbol) {
                     wickDownColor: '#da3633', wickUpColor: '#2ea043',
                 });
             } else {
-                priceSeries = mainChart.addLineSeries({ color: '#2196f3', lineWidth: 2 });
+                const styleMap = { solid: 0, dashed: 2, dotted: 1 };
+                priceSeries = mainChart.addLineSeries({
+                    color: getDrawColor(),
+                    lineWidth: getDrawWidth(),
+                    lineStyle: styleMap[getDrawStyle()] ?? 0,
+                });
             }
             slot.currentSeriesType = chartType;
         }
+
+        applyPriceSeriesStyle();
 
         const rawFormatted = data.map(d => ({
             time: d.date.split('T')[0],
@@ -2387,9 +2395,24 @@ function getOrCreatePane(index, type) {
             if (window.syncCrosshairListener) window.syncCrosshairListener(newChart, param);
         });
 
-        sc = { chart: newChart, container, paneIndex: index, type, legend, series: [] };
+        // Create a drawing canvas overlay for this subplot
+        const subCanvas = document.createElement('canvas');
+        subCanvas.className = 'drawing-layer';
+        subCanvas.dataset.pane = String(index);
+        container.appendChild(subCanvas);
+        const subCtx = subCanvas.getContext('2d');
+
+        sc = { chart: newChart, container, paneIndex: index, type, legend, series: [], canvas: subCanvas, ctx: subCtx };
         slot.secondaryCharts.push(sc);
         updatePanesVisibility();
+        // Attach drawing event listeners to the new subplot canvas
+        if (_drawingHandlers) {
+            subCanvas.addEventListener('click', _drawingHandlers.click);
+            subCanvas.addEventListener('dblclick', _drawingHandlers.dblclick);
+            subCanvas.addEventListener('mousedown', _drawingHandlers.mousedown);
+            subCanvas.addEventListener('mousemove', _drawingHandlers.mousemove);
+            (subCanvas.parentElement || subCanvas).addEventListener('contextmenu', _drawingHandlers.contextmenu);
+        }
     }
     return sc.chart;
 }
@@ -2469,38 +2492,71 @@ function getRandomColor(type) {
 // === DRAWING TOOLS ENGINE ===
 // ============================
 
+// --- Pane context helpers ---
+function getPaneContext(paneIndex) {
+    if (paneIndex === 0) {
+        return { chart: mainChart, series: priceSeries, canvas: drawingCanvas, ctx: drawingCtx };
+    }
+    const slot = chartSlots[activeChartIndex];
+    const sc = slot?.secondaryCharts?.find(c => c.paneIndex === paneIndex);
+    if (!sc) return null;
+    // Find the first non-ghost series (ghost has priceScaleId 'none')
+    let series = null;
+    if (sc.series && sc.series.length > 0) {
+        series = sc.series.find(s => {
+            try { return s.priceScaleId && s.priceScaleId() !== 'none'; } catch(e) { return true; }
+        }) || sc.series[0];
+    }
+    return { chart: sc.chart, series, canvas: sc.canvas, ctx: sc.ctx };
+}
+
+function getPaneCanvas(paneIndex) {
+    const ctx = getPaneContext(paneIndex);
+    return ctx ? ctx.canvas : null;
+}
+
+function getPaneCtx(paneIndex) {
+    const ctx = getPaneContext(paneIndex);
+    return ctx ? ctx.ctx : null;
+}
+
 // --- Coordinate helpers ---
-function priceToY(price) {
-    if (!priceSeries) return null;
+function priceToY(price, paneIndex) {
+    if (paneIndex === undefined) paneIndex = activePaneIndex;
+    const pane = getPaneContext(paneIndex);
+    if (!pane || !pane.series) {
+        if (paneIndex === 0) return null;
+        return priceToY(price, 0);
+    }
     try {
         const val = (typeof price === 'string') ? parseFloat(price) : price;
         if (isNaN(val)) return null;
-        return priceSeries.priceToCoordinate(val);
+        return pane.series.priceToCoordinate(val);
     } catch (e) { return null; }
 }
 
-function yToPrice(y) {
-    if (!priceSeries) return null;
+function yToPrice(y, paneIndex) {
+    if (paneIndex === undefined) paneIndex = activePaneIndex;
+    const pane = getPaneContext(paneIndex);
+    if (!pane || !pane.series) {
+        if (paneIndex === 0) return null;
+        return yToPrice(y, 0);
+    }
     try {
-        return priceSeries.coordinateToPrice(y);
+        return pane.series.coordinateToPrice(y);
     } catch (e) { return null; }
 }
-function timeToX(time) {
-    if (!mainChart) return null;
-    const ts = mainChart.timeScale();
+function timeToX(time, paneIndex) {
+    if (paneIndex === undefined) paneIndex = activePaneIndex;
+    const pane = getPaneContext(paneIndex);
+    const chart = pane ? pane.chart : mainChart;
+    if (!chart) return null;
+    const ts = chart.timeScale();
     try {
-        // If it's a BusinessDay object, pass it directly
         if (time && typeof time === 'object' && time.year) {
             return ts.timeToCoordinate(time);
         }
-
         const numericVal = Number(time);
-
-        // DISTINGUISH BETWEEN LOGICAL INDEX AND TIMESTAMP
-        // 1. If it's literally a number and small (e.g. < 1,000,000), it's a logical index (future margin)
-        // 2. If it's a large value (> 10^9), it's a timestamp (seconds since epoch)
-        // 3. If it's a string like "2023-01-01", numericVal is NaN or a date-number
-
         if (!isNaN(numericVal)) {
             if (numericVal < 1000000) {
                 return ts.logicalToCoordinate(numericVal);
@@ -2508,31 +2564,24 @@ function timeToX(time) {
                 return ts.timeToCoordinate(numericVal);
             }
         }
-
-        // Handle YYYY-MM-DD strings
         return ts.timeToCoordinate(time);
     } catch (e) { return null; }
 }
-function xToTime(x) {
-    if (!mainChart) return null;
-    const ts = mainChart.timeScale();
+function xToTime(x, paneIndex) {
+    if (paneIndex === undefined) paneIndex = activePaneIndex;
+    const pane = getPaneContext(paneIndex);
+    const chart = pane ? pane.chart : mainChart;
+    if (!chart) return null;
+    const ts = chart.timeScale();
     try {
         const time = ts.coordinateToTime(x);
         if (time !== null) {
-            // Return BusinessDay object directly if possible, or ISO string
             if (typeof time === 'string' || typeof time === 'number') return time;
             if (time.year) return `${time.year}-${String(time.month).padStart(2, '0')}-${String(time.day).padStart(2, '0')}`;
             return time;
         }
-        // If in the future margin, return the logical index as number (small)
         const logical = ts.coordinateToLogical(x);
         return logical;
-    } catch (e) { return null; }
-}
-function yToPrice(y) {
-    if (!priceSeries) return null;
-    try {
-        return priceSeries.coordinateToPrice(y);
     } catch (e) { return null; }
 }
 
@@ -2622,8 +2671,64 @@ function syncDrawingCanvasSize() {
     }
 }
 
+function syncSubplotDrawingCanvasSize(paneIndex) {
+    const slot = chartSlots[activeChartIndex];
+    const sc = slot?.secondaryCharts?.find(c => c.paneIndex === paneIndex);
+    if (!sc || !sc.canvas || !sc.chart) return;
+    const container = sc.container;
+    if (!container) return;
+
+    const lwcCanvases = container.querySelectorAll('canvas');
+    let plotCanvas = null;
+    if (lwcCanvases.length > 0) {
+        plotCanvas = Array.from(lwcCanvases).find(c => c.clientWidth > 100);
+    }
+
+    const canvas = sc.canvas;
+    if (plotCanvas) {
+        const containerRect = container.getBoundingClientRect();
+        const plotRect = plotCanvas.getBoundingClientRect();
+
+        const offsetLeft = Math.round(plotRect.left - containerRect.left);
+        const offsetTop = Math.round(plotRect.top - containerRect.top);
+
+        const dw = Math.round(plotRect.width);
+        const dh = Math.round(plotRect.height);
+
+        if (canvas.width !== dw || canvas.height !== dh) {
+            canvas.width = dw;
+            canvas.height = dh;
+        }
+
+        canvas.style.left = `${offsetLeft}px`;
+        canvas.style.top = `${offsetTop}px`;
+        canvas.style.width = `${dw}px`;
+        canvas.style.height = `${dh}px`;
+    } else {
+        const targetW = container.clientWidth;
+        const targetH = container.clientHeight;
+        if (canvas.width !== targetW || canvas.height !== targetH) {
+            canvas.width = targetW;
+            canvas.height = targetH;
+        }
+        canvas.style.left = '0px';
+        canvas.style.top = '0px';
+        canvas.style.width = `${targetW}px`;
+        canvas.style.height = `${targetH}px`;
+    }
+}
+
 function resizeDrawingCanvas() {
     syncDrawingCanvasSize();
+    // Also sync all visible subplot canvases
+    const slot = chartSlots[activeChartIndex];
+    if (slot) {
+        slot.secondaryCharts.forEach(sc => {
+            if (sc.container.style.display !== 'none') {
+                syncSubplotDrawingCanvasSize(sc.paneIndex);
+            }
+        });
+    }
     redrawAllDrawings();
 }
 
@@ -2677,7 +2782,7 @@ function setupDrawingToolbar() {
     isDrawingToolbarInitialized = true;
     const colorPicker = document.getElementById('drawing-color-picker');
     if (colorPicker) {
-        colorPicker.addEventListener('input', () => redrawAllDrawings());
+        colorPicker.addEventListener('input', () => { redrawAllDrawings(); applyPriceSeriesStyle(); });
         // Save only on change (when user releases the picker)
         colorPicker.addEventListener('change', () => {
             if (activeDrawing) saveDrawing(activeDrawing);
@@ -2689,6 +2794,7 @@ function setupDrawingToolbar() {
         widthSlider.addEventListener('input', () => {
             widthLabel.textContent = widthSlider.value + 'px';
             redrawAllDrawings();
+            applyPriceSeriesStyle();
         });
         // Save only on change (when user releases the slider)
         widthSlider.addEventListener('change', () => {
@@ -2699,6 +2805,7 @@ function setupDrawingToolbar() {
     if (styleSelect) {
         styleSelect.addEventListener('change', () => {
             redrawAllDrawings();
+            applyPriceSeriesStyle();
             if (activeDrawing) saveDrawing(activeDrawing);
         });
     }
@@ -2719,6 +2826,16 @@ function setupDrawingToolbar() {
 function getDrawColor() { return document.getElementById('drawing-color-picker')?.value || '#58a6ff'; }
 function getDrawWidth() { return parseFloat(document.getElementById('drawing-width-slider')?.value || '1.5'); }
 function getDrawStyle() { return document.getElementById('drawing-style-select')?.value || 'solid'; }
+function isLineMode() { return document.getElementById('chart-type-select')?.value === 'line'; }
+function applyPriceSeriesStyle() {
+    if (!priceSeries || !isLineMode()) return;
+    const styleMap = { solid: 0, dashed: 2, dotted: 1 };
+    priceSeries.applyOptions({
+        color: getDrawColor(),
+        lineWidth: getDrawWidth(),
+        lineStyle: styleMap[getDrawStyle()] ?? 0,
+    });
+}
 
 function setDrawingTool(tool) {
     console.log("[script.js] setDrawingTool called with:", tool, "current was:", currentDrawingTool);
@@ -2737,11 +2854,19 @@ function setDrawingTool(tool) {
             console.log(`[script.js] Button for ${tool} marked as active`);
         }
     });
-    if (drawingCanvas) {
-        const isDrawing = tool !== 'cursor';
-        drawingCanvas.classList.toggle('active', isDrawing);
-        drawingCanvas.style.cursor = tool === 'eraser' ? 'cell' : isDrawing ? 'crosshair' : 'default';
+    // Update drawing canvases for the active slot only
+    const slot = chartSlots[activeChartIndex];
+    if (slot) {
+        const slotEl = document.querySelector(`.chart-slot[data-slot="${slot.index}"]`);
+        if (slotEl) {
+            slotEl.querySelectorAll('.drawing-layer').forEach(c => {
+                const isDrawing = tool !== 'cursor';
+                c.classList.toggle('active', isDrawing);
+                c.style.cursor = tool === 'eraser' ? 'cell' : isDrawing ? 'crosshair' : 'default';
+            });
+        }
     }
+    // Disable scroll on main chart when drawing tool active (allows click without scroll)
     if (mainChart) {
         const nav = (tool === 'cursor' || tool === 'eraser');
         mainChart.applyOptions({ handleScroll: { mouseWheel: true, pressedMouseMove: nav, horzTouchDrag: nav, vertTouchDrag: nav } });
@@ -2769,24 +2894,39 @@ function reattachDrawingListeners() {
     drawingCanvas = slot.canvas;
     drawingCtx = slot.ctx;
 
-    // Remove listeners from all canvases
-    document.querySelectorAll('.drawing-layer').forEach(c => {
-        if (_drawingHandlers) {
-            c.removeEventListener('click', _drawingHandlers.click);
-            c.removeEventListener('dblclick', _drawingHandlers.dblclick);
-            c.removeEventListener('mousedown', _drawingHandlers.mousedown);
-            c.removeEventListener('mousemove', _drawingHandlers.mousemove);
-            c.removeEventListener('contextmenu', _drawingHandlers.contextmenu);
-        }
-    });
+    // Remove listeners from canvases in the active slot only
+    const slotEl = document.querySelector(`.chart-slot[data-slot="${slot.index}"]`);
+    if (slotEl) {
+        slotEl.querySelectorAll('.drawing-layer').forEach(c => {
+            if (_drawingHandlers) {
+                c.removeEventListener('click', _drawingHandlers.click);
+                c.removeEventListener('dblclick', _drawingHandlers.dblclick);
+                c.removeEventListener('mousedown', _drawingHandlers.mousedown);
+                c.removeEventListener('mousemove', _drawingHandlers.mousemove);
+                c.removeEventListener('contextmenu', _drawingHandlers.contextmenu);
+            }
+        });
+    }
 
-    if (!drawingCanvas) return;
     _drawingHandlers = buildDrawingHandlers();
-    drawingCanvas.addEventListener('click', _drawingHandlers.click);
-    drawingCanvas.addEventListener('dblclick', _drawingHandlers.dblclick);
-    drawingCanvas.addEventListener('mousedown', _drawingHandlers.mousedown);
-    drawingCanvas.addEventListener('mousemove', _drawingHandlers.mousemove);
-    (drawingCanvas.parentElement || drawingCanvas).addEventListener('contextmenu', _drawingHandlers.contextmenu);
+
+    // Attach handlers to all drawing-layer canvases in the active slot
+    if (slotEl) {
+        slotEl.querySelectorAll('.drawing-layer').forEach(c => {
+            c.addEventListener('click', _drawingHandlers.click);
+            c.addEventListener('dblclick', _drawingHandlers.dblclick);
+            c.addEventListener('mousedown', _drawingHandlers.mousedown);
+            c.addEventListener('mousemove', _drawingHandlers.mousemove);
+            (c.parentElement || c).addEventListener('contextmenu', _drawingHandlers.contextmenu);
+        });
+    }
+}
+
+function getPaneFromEvent(e) {
+    const canvas = e.currentTarget;
+    if (!canvas) return 0;
+    const paneStr = canvas.dataset.pane;
+    return paneStr ? parseInt(paneStr, 10) : 0;
 }
 
 function buildDrawingHandlers() {
@@ -2797,33 +2937,53 @@ function buildDrawingHandlers() {
         text_label: 1, callout: 2, price_label: 1
     };
 
+    function getCanvasAndPane(e) {
+        const canvas = e.currentTarget;
+        if (!canvas) return { canvas: drawingCanvas, pane: 0 };
+        const pane = getPaneFromEvent(e);
+        // Ensure drawingCanvas/drawingCtx point to the active canvas
+        if (pane === 0) {
+            // Main chart - use globals
+            return { canvas: drawingCanvas, ctx: drawingCtx, pane: 0 };
+        }
+        // Subplot - get from secondary chart
+        const slot = chartSlots[activeChartIndex];
+        const sc = slot?.secondaryCharts?.find(c => c.paneIndex === pane);
+        if (sc && sc.canvas) {
+            return { canvas: sc.canvas, ctx: sc.ctx, pane };
+        }
+        return { canvas, ctx: canvas.getContext('2d'), pane };
+    }
+
     function clickHandler(e) {
-        if (!drawingCanvas) return;
+        const { canvas, pane } = getCanvasAndPane(e);
+        if (!canvas) return;
+        activePaneIndex = pane;
         if (currentDrawingTool === 'cursor') return;
-        const rect = drawingCanvas.getBoundingClientRect();
+        const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left, y = e.clientY - rect.top;
         if (currentDrawingTool === 'eraser') {
-            const target = findNearestDrawing(x, y);
+            const target = findNearestDrawing(x, y, pane);
             if (target) { deleteDrawing(target); }
             return;
         }
-        const time = xToTime(x), price = yToPrice(y);
+        const time = xToTime(x, pane), price = yToPrice(y, pane);
         if (time == null || price == null) return;
         if (currentDrawingTool === 'text_label') {
             const text = prompt('Testo da inserire sul grafico:');
             if (!text) return;
-            const newDrawing = { type: 'text_label', ticker: activeTicker, points: [{ time, price }], text, color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
+            const newDrawing = { type: 'text_label', ticker: activeTicker, paneIndex: pane, points: [{ time, price }], text, color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
             drawings.push(newDrawing);
             saveDrawing(newDrawing); redrawAllDrawings(); return;
         }
         if (currentDrawingTool === 'price_label') {
-            const newDrawing = { type: 'price_label', ticker: activeTicker, points: [{ time, price }], color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
+            const newDrawing = { type: 'price_label', ticker: activeTicker, paneIndex: pane, points: [{ time, price }], color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
             drawings.push(newDrawing);
             saveDrawing(newDrawing); redrawAllDrawings(); return;
         }
         if (currentDrawingTool === 'callout') {
             if (!activeDrawing) {
-                activeDrawing = { type: 'callout', ticker: activeTicker, points: [{ time, price }], color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
+                activeDrawing = { type: 'callout', ticker: activeTicker, paneIndex: pane, points: [{ time, price }], color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
                 redrawAllDrawings(); return;
             } else {
                 const text = prompt('Testo del callout:');
@@ -2837,11 +2997,11 @@ function buildDrawingHandlers() {
             }
         }
         if (currentDrawingTool === 'polyline') {
-            if (!activeDrawing) activeDrawing = { type: 'polyline', ticker: activeTicker, points: [], color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
+            if (!activeDrawing) activeDrawing = { type: 'polyline', ticker: activeTicker, paneIndex: pane, points: [], color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
             activeDrawing.points.push({ time, price });
             redrawAllDrawings(); return;
         }
-        if (!activeDrawing) activeDrawing = { type: currentDrawingTool, ticker: activeTicker, points: [], color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
+        if (!activeDrawing) activeDrawing = { type: currentDrawingTool, ticker: activeTicker, paneIndex: pane, points: [], color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
         activeDrawing.points.push({ time, price });
         if (activeDrawing.points.length >= (needed[currentDrawingTool] || 2)) {
             const newDrawing = { ...activeDrawing, points: [...activeDrawing.points] };
@@ -2864,16 +3024,18 @@ function buildDrawingHandlers() {
     }
 
     function mousedownHandler(e) {
-        if (!drawingCanvas) return;
-        const rect = drawingCanvas.getBoundingClientRect();
+        const { canvas, pane } = getCanvasAndPane(e);
+        if (!canvas) return;
+        activePaneIndex = pane;
+        const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left, y = e.clientY - rect.top;
-        const time = xToTime(x), price = yToPrice(y);
+        const time = xToTime(x, pane), price = yToPrice(y, pane);
         if (currentDrawingTool === 'modify') {
-            const target = findNearestDrawing(x, y);
+            const target = findNearestDrawing(x, y, pane);
             if (target && time != null && price != null) {
                 let pIdx = -1;
                 for (let i = 0; i < target.points.length; i++) {
-                    const px = timeToX(target.points[i].time), py = priceToY(target.points[i].price);
+                    const px = timeToX(target.points[i].time, pane), py = priceToY(target.points[i].price, pane);
                     if (px != null && py != null && Math.hypot(x - px, y - py) < 8) { pIdx = i; break; }
                 }
                 isDragging = true;
@@ -2886,18 +3048,20 @@ function buildDrawingHandlers() {
         }
         if (currentDrawingTool === 'brush') {
             if (time != null && price != null) {
-                activeDrawing = { type: 'brush', ticker: activeTicker, points: [{ time, price }], color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
+                activeDrawing = { type: 'brush', ticker: activeTicker, paneIndex: pane, points: [{ time, price }], color: getDrawColor(), lineWidth: getDrawWidth(), lineStyle: getDrawStyle() };
             }
         }
     }
 
     function mousemoveHandler(e) {
-        if (!drawingCanvas) return;
+        const { canvas, ctx, pane } = getCanvasAndPane(e);
+        if (!canvas) return;
+        activePaneIndex = pane;
         if (currentDrawingTool === 'cursor') return;
-        const rect = drawingCanvas.getBoundingClientRect();
+        const rect = canvas.getBoundingClientRect();
         lastMousePos = { x: e.clientX - rect.left, y: e.clientY - rect.top };
         if (isDragging && dragTarget) {
-            const curTime = xToTime(lastMousePos.x), curPrice = yToPrice(lastMousePos.y);
+            const curTime = xToTime(lastMousePos.x, pane), curPrice = yToPrice(lastMousePos.y, pane);
             if (curTime != null && curPrice != null && dragStartPos.time != null && dragStartPos.price != null) {
                 if (dragPointIndex !== -1) {
                     dragTarget.points[dragPointIndex] = { time: curTime, price: curPrice };
@@ -2921,20 +3085,20 @@ function buildDrawingHandlers() {
             return;
         }
         if (currentDrawingTool === 'brush' && activeDrawing) {
-            const time = xToTime(lastMousePos.x), price = yToPrice(lastMousePos.y);
+            const time = xToTime(lastMousePos.x, pane), price = yToPrice(lastMousePos.y, pane);
             if (time != null && price != null) { activeDrawing.points.push({ time, price }); redrawAllDrawings(); }
             return;
         }
         if (currentDrawingTool === 'eraser') {
             redrawAllDrawings();
-            const target = findNearestDrawing(lastMousePos.x, lastMousePos.y);
-            if (target && drawingCtx) {
-                drawingCtx.save();
-                drawingCtx.strokeStyle = '#da3633';
-                drawingCtx.lineWidth = (target.lineWidth || 1.5) + 4;
-                drawingCtx.globalAlpha = 0.5;
-                renderDrawing(drawingCtx, target, false);
-                drawingCtx.restore();
+            const target = findNearestDrawing(lastMousePos.x, lastMousePos.y, pane);
+            if (target && ctx) {
+                ctx.save();
+                ctx.strokeStyle = '#da3633';
+                ctx.lineWidth = (target.lineWidth || 1.5) + 4;
+                ctx.globalAlpha = 0.5;
+                renderDrawing(ctx, target, false);
+                ctx.restore();
             }
             return;
         }
@@ -2942,16 +3106,18 @@ function buildDrawingHandlers() {
     }
 
     function contextmenuHandler(e) {
-        if (!drawingCanvas) return;
+        const { canvas, pane } = getCanvasAndPane(e);
+        if (!canvas) return;
+        activePaneIndex = pane;
         const existingMenu = document.getElementById('drawing-ctx-menu');
         if (existingMenu) { e.preventDefault(); dismissContextMenu(); return; }
         if (activeDrawing && activeDrawing.points.length > 0) {
             e.preventDefault(); activeDrawing = null; redrawAllDrawings(); return;
         }
-        const rect = drawingCanvas.getBoundingClientRect();
+        const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left, y = e.clientY - rect.top;
         if (x < 0 || x > rect.width || y < 0 || y > rect.height) return;
-        const target = findNearestDrawing(x, y);
+        const target = findNearestDrawing(x, y, pane);
         if (target) { e.preventDefault(); showDrawingContextMenu(e.clientX, e.clientY, target); }
         else if (currentDrawingTool !== 'cursor' && !activeDrawing) { e.preventDefault(); setDrawingTool('cursor'); }
         else if (activeDrawing) { e.preventDefault(); activeDrawing = null; redrawAllDrawings(); }
@@ -2989,14 +3155,10 @@ function setupDrawingMouseListeners() {
 
 // --- Main redraw ---
 function redrawAllDrawings() {
-    if (!drawingCtx || !drawingCanvas || !mainChart) return;
-
-    // Sync the drawing canvas with the LWC internal plot area (correct alignment,
-    // NOT the full container which includes price/time scales).
-    syncDrawingCanvasSize();
-
-    drawingCtx.clearRect(0, 0, drawingCanvas.width, drawingCanvas.height);
     if (!activeTicker) return;
+    const slot = chartSlots[activeChartIndex];
+    if (!slot) return;
+
     const needed = {
         horizontal_line: 1, vertical_line: 1, trend_line: 2, extended_line: 2, ray: 2, arrow: 2,
         rectangle: 2, circle: 2, triangle: 3, polyline: 2, brush: 3,
@@ -3004,41 +3166,83 @@ function redrawAllDrawings() {
         text_label: 1, callout: 2, price_label: 1
     };
 
-    drawings.filter(d => d.ticker === activeTicker).forEach(d => {
-        renderDrawing(drawingCtx, d, false);
-        // Show anchor points ONLY in modify mode and ONLY for finalized drawings
-        if (currentDrawingTool === 'modify' && d.points.length >= (needed[d.type] || 1)) {
-            if (d._isHidden) return;
-            drawingCtx.save();
-            drawingCtx.fillStyle = '#58a6ff';
-            drawingCtx.strokeStyle = '#fff';
-            drawingCtx.lineWidth = 1;
-            d.points.forEach(p => {
-                if (p.time != null && p.price != null) {
-                    const x = timeToX(p.time), y = priceToY(p.price);
-                    if (x != null && y != null) {
-                        drawingCtx.beginPath();
-                        drawingCtx.arc(x, y, 4, 0, Math.PI * 2);
-                        drawingCtx.fill();
-                        drawingCtx.stroke();
+    const tickerDrawings = drawings.filter(d => d.ticker === activeTicker);
+
+    // Helper to render on a specific pane canvas
+    function renderPaneDrawings(paneIndex, ctx, canvas, isMainPane) {
+        if (!ctx || !canvas) return;
+        const prevPane = activePaneIndex;
+        const prevCanvas = drawingCanvas;
+        const prevCtx = drawingCtx;
+        // Temporarily assign globals so rendering functions use the correct canvas dimensions
+        activePaneIndex = paneIndex;
+        drawingCanvas = canvas;
+        drawingCtx = ctx;
+
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        const paneDrawings = tickerDrawings.filter(d => (d.paneIndex || 0) === paneIndex);
+        paneDrawings.forEach(d => {
+            renderDrawing(ctx, d, false);
+            if (currentDrawingTool === 'modify' && d.points.length >= (needed[d.type] || 1)) {
+                if (d._isHidden) return;
+                ctx.save();
+                ctx.fillStyle = '#58a6ff';
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 1;
+                d.points.forEach(p => {
+                    if (p.time != null && p.price != null) {
+                        const x = timeToX(p.time, paneIndex), y = priceToY(p.price, paneIndex);
+                        if (x != null && y != null) {
+                            ctx.beginPath();
+                            ctx.arc(x, y, 4, 0, Math.PI * 2);
+                            ctx.fill();
+                            ctx.stroke();
+                        }
                     }
-                }
-            });
-            drawingCtx.restore();
+                });
+                ctx.restore();
+            }
+        });
+
+        // Draw active drawing preview on this pane
+        if (activeDrawing && activeDrawing.points.length > 0 && (activeDrawing.paneIndex || 0) === paneIndex) {
+            const prevTime = xToTime(lastMousePos.x, paneIndex);
+            const prevPrice = yToPrice(lastMousePos.y, paneIndex);
+            const preview = {
+                type: activeDrawing.type, ticker: activeDrawing.ticker,
+                points: [...activeDrawing.points, { time: prevTime, price: prevPrice }],
+                lineStyle: activeDrawing.lineStyle
+            };
+            ctx.globalAlpha = 0.55;
+            renderDrawing(ctx, preview, true);
+            ctx.globalAlpha = 1.0;
         }
-    });
-    if (activeDrawing && activeDrawing.points.length > 0) {
-        const preview = {
-            type: activeDrawing.type, ticker: activeDrawing.ticker,
-            points: [...activeDrawing.points, { time: xToTime(lastMousePos.x), price: yToPrice(lastMousePos.y) }],
-            lineStyle: activeDrawing.lineStyle
-        };
-        drawingCtx.globalAlpha = 0.55;
-        renderDrawing(drawingCtx, preview, true);
-        drawingCtx.globalAlpha = 1.0;
+
+        activePaneIndex = prevPane;
+        drawingCanvas = prevCanvas;
+        drawingCtx = prevCtx;
     }
 
+    // 1. Render main chart (pane 0)
+    syncDrawingCanvasSize();
+    renderPaneDrawings(0, drawingCtx, drawingCanvas, true);
+
+    // 2. Render transaction notes on main chart only
+    // Save/Restore globals for transaction dots (always on main chart)
+    const savedCanvas = drawingCanvas, savedCtx = drawingCtx;
+    drawingCanvas = slot.canvas || drawingCanvas;
+    drawingCtx = slot.ctx || drawingCtx;
     drawTransactionNoteDots();
+    drawingCanvas = savedCanvas;
+    drawingCtx = savedCtx;
+
+    // 3. Render each visible subplot
+    slot.secondaryCharts.forEach(sc => {
+        if (sc.container.style.display === 'none') return;
+        syncSubplotDrawingCanvasSize(sc.paneIndex);
+        renderPaneDrawings(sc.paneIndex, sc.ctx, sc.canvas, false);
+    });
 }
 
 function drawTransactionNoteDots() {
@@ -3652,13 +3856,47 @@ function showDrawingContextMenu(ex, ey, target) {
     h.style.cssText = 'opacity:0.6;cursor:default;font-weight:bold'; menu.appendChild(h);
     // Color row
     const colorRow = document.createElement('div');
-    colorRow.className = 'drawing-context-menu-item'; colorRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+    colorRow.className = 'drawing-context-menu-item'; colorRow.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
     const colPick = document.createElement('input'); colPick.type = 'color'; colPick.value = target.color || '#58a6ff';
     colPick.style.cssText = 'width:28px;height:24px;padding:1px;cursor:pointer;border-radius:4px;border:none;background:none;';
     colPick.addEventListener('input', () => { target.color = colPick.value; redrawAllDrawings(); });
     colPick.addEventListener('change', () => { saveDrawing(target); });
     const colLbl = document.createElement('span'); colLbl.textContent = 'Colore';
-    colorRow.appendChild(colPick); colorRow.appendChild(colLbl); menu.appendChild(colorRow);
+    colLbl.style.cssText = 'flex-shrink:0;';
+    colorRow.appendChild(colPick); colorRow.appendChild(colLbl);
+    // Presets palette in context menu
+    const ctxPaletteWrap = document.createElement('span');
+    ctxPaletteWrap.style.cssText = 'position:relative;display:inline-flex;margin-left:auto;';
+    const ctxPaletteBtn = document.createElement('button');
+    ctxPaletteBtn.type = 'button';
+    ctxPaletteBtn.className = 'color-presets-btn';
+    ctxPaletteBtn.textContent = '🎨';
+    ctxPaletteBtn.title = 'Colori predefiniti';
+    ctxPaletteBtn.style.cssText = 'width:24px;height:24px;font-size:11px;';
+    const ctxPalette = document.createElement('div');
+    ctxPalette.className = 'color-presets-popup';
+    ctxPalette.style.cssText = 'right:0;left:auto;';
+    COLOR_PRESETS.forEach(c => {
+        const s = document.createElement('button');
+        s.type = 'button'; s.className = 'color-swatch';
+        s.style.backgroundColor = c; s.dataset.color = c; s.title = c;
+        ctxPalette.appendChild(s);
+    });
+    ctxPalette.addEventListener('click', (e) => {
+        const s = e.target.closest('.color-swatch');
+        if (!s) return;
+        target.color = s.dataset.color; colPick.value = s.dataset.color;
+        redrawAllDrawings(); saveDrawing(target);
+        ctxPalette.classList.remove('active');
+    });
+    ctxPaletteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        document.querySelectorAll('.drawing-context-menu .color-presets-popup').forEach(p => p.classList.remove('active'));
+        ctxPalette.classList.toggle('active');
+    });
+    ctxPaletteWrap.appendChild(ctxPaletteBtn); ctxPaletteWrap.appendChild(ctxPalette);
+    colorRow.appendChild(ctxPaletteWrap);
+    menu.appendChild(colorRow);
     // Width row
     const wRow = document.createElement('div');
     wRow.className = 'drawing-context-menu-item'; wRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
@@ -3733,8 +3971,9 @@ function showDrawingContextMenu(ex, ey, target) {
     menu.appendChild(del); document.body.appendChild(menu);
 }
 function dismissContextMenu() { const m = document.getElementById('drawing-ctx-menu'); if (m) m.remove(); }
-function findNearestDrawing(x, y, thr = 10) {
-    for (const d of [...drawings.filter(dd => dd.ticker === activeTicker)].reverse()) {
+function findNearestDrawing(x, y, paneIndex, thr = 10) {
+    if (paneIndex === undefined) paneIndex = activePaneIndex;
+    for (const d of [...drawings.filter(dd => dd.ticker === activeTicker && (dd.paneIndex || 0) === paneIndex)].reverse()) {
         const p = d.points;
         
         // Controllo prima se è stato cliccato un punto di ancoraggio
@@ -3858,7 +4097,8 @@ async function saveDrawing(drawing) {
         color: drawing.color,
         line_width: drawing.lineWidth || 1.5,
         line_style: drawing.lineStyle || 'solid',
-        text: drawing.text
+        text: drawing.text,
+        pane_index: drawing.paneIndex || 0
     };
 
     try {
@@ -3903,6 +4143,7 @@ async function loadDrawings(ticker) {
                 lineWidth: d.line_width,
                 lineStyle: d.line_style || 'solid',
                 text: d.text,
+                paneIndex: d.pane_index || 0,
                 alarms: d.alarms || []
             };
             if (out.type === 'regression_channel' && out.text) {
@@ -3955,6 +4196,61 @@ async function migrateDrawingsToBackend() {
 function initDrawingTools() {
     initDrawingCanvas();
     setupDrawingToolbar();
+}
+
+const COLOR_PRESETS = [
+    '#FF0000','#DC143C','#B22222','#8B0000','#FF4500','#FF6347','#FF8C00','#FFA500',
+    '#FFD700','#FFFF00','#FFFACD','#32CD32','#00FF00','#228B22','#008000','#006400',
+    '#00FA9A','#00FFFF','#00CED1','#20B2AA','#008B8B','#1E90FF','#00BFFF','#87CEEB',
+    '#0000FF','#0000CD','#00008B','#4169E1','#800080','#8A2BE2','#9400D3','#BA55D3',
+    '#FF69B4','#FF1493','#DB7093','#A0522D','#8B4513','#000000','#333333','#808080',
+    '#C0C0C0','#FFFFFF','#F5F5F5','#696969','#D2691E','#CD853F','#F0E68C','#2E8B57',
+    '#6495ED','#DA70D6'
+];
+
+function initColorPresets() {
+    const popups = document.querySelectorAll('.color-presets-popup');
+    popups.forEach(popup => {
+        popup.innerHTML = '';
+        COLOR_PRESETS.forEach(color => {
+            const swatch = document.createElement('button');
+            swatch.type = 'button';
+            swatch.className = 'color-swatch';
+            swatch.style.backgroundColor = color;
+            swatch.dataset.color = color;
+            swatch.title = color;
+            popup.appendChild(swatch);
+        });
+        popup.addEventListener('click', (e) => {
+            const swatch = e.target.closest('.color-swatch');
+            if (!swatch) return;
+            const color = swatch.dataset.color;
+            const btn = popup.parentElement.querySelector('.color-presets-btn');
+            const targetId = btn ? btn.dataset.target : null;
+            const input = targetId ? document.getElementById(targetId) : null;
+            if (!input) return;
+            input.value = color;
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            input.dispatchEvent(new Event('change', { bubbles: true }));
+            popup.classList.remove('active');
+        });
+    });
+
+    document.querySelectorAll('.color-presets-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const popup = btn.parentElement.querySelector('.color-presets-popup');
+            if (!popup) return;
+            document.querySelectorAll('.color-presets-popup').forEach(p => p.classList.remove('active'));
+            popup.classList.toggle('active');
+        });
+    });
+
+    document.addEventListener('click', (e) => {
+        if (!e.target.closest('.color-presets-popup') && !e.target.closest('.color-presets-btn')) {
+            document.querySelectorAll('.color-presets-popup').forEach(p => p.classList.remove('active'));
+        }
+    });
 }
 
 const AVAILABLE_INDICATORS = [
@@ -5590,6 +5886,7 @@ function initApp() {
     }
 
     initDrawingTools();
+    initColorPresets();
 
     document.getElementById('sidebar-toggle').addEventListener('click', () => {
         const sidebar = document.getElementById('sidebar');

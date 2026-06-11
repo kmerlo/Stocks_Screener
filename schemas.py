@@ -175,6 +175,7 @@ class DrawingOut(BaseModel):
     line_width: float
     line_style: str = 'solid'
     text: Optional[str] = None
+    pane_index: int = 0
 
     @field_validator('points', mode='before')
     @classmethod
@@ -199,6 +200,7 @@ class DrawingBase(BaseModel):
     line_width: float
     line_style: str = 'solid'
     text: Optional[str] = None
+    pane_index: int = 0
 
 class DrawingCreate(DrawingBase):
     pass

@@ -1061,6 +1061,66 @@ th {
     padding: 4px;
 }
 
+/* Color Presets Popup */
+.color-presets-btn {
+    background: var(--card-bg);
+    border: 1px solid var(--border-color);
+    color: var(--text-color);
+    padding: 2px 4px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    line-height: 1;
+    width: 28px;
+    height: 28px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+}
+.color-presets-btn:hover {
+    background: var(--border-color);
+    border-color: var(--accent-color);
+}
+
+.color-presets-popup {
+    display: none;
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    background: #1c2128;
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 6px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    z-index: 2200;
+    grid-template-columns: repeat(8, 1fr);
+    gap: 3px;
+    width: 192px;
+}
+.color-presets-popup.active {
+    display: grid !important;
+}
+
+.color-swatch {
+    width: 20px;
+    height: 20px;
+    border: 1px solid rgba(255,255,255,0.1);
+    border-radius: 3px;
+    cursor: pointer;
+    padding: 0;
+    margin: 0;
+    transition: transform 0.1s, border-color 0.1s;
+}
+.color-swatch:hover {
+    transform: scale(1.25);
+    border-color: var(--accent-color);
+    z-index: 1;
+}
+.color-swatch:active {
+    transform: scale(0.95);
+}
+
 canvas.drawing-layer {
     position: absolute;
     top: 0;

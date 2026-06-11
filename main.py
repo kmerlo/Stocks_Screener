@@ -945,7 +945,8 @@ def sync_drawings(symbol: str, drawings_data: List[schemas.DrawingSync], db: Ses
                 color=d.color,
                 line_width=d.line_width,
                 line_style=d.line_style,
-                text=d.text
+                text=d.text,
+                pane_index=d.pane_index
             )
             db.add(db_drawing)
             added_count += 1
@@ -965,7 +966,8 @@ def create_drawing(symbol: str, drawing_data: schemas.DrawingCreate, db: Session
             color=drawing_data.color,
             line_width=drawing_data.line_width,
             line_style=drawing_data.line_style,
-            text=drawing_data.text
+            text=drawing_data.text,
+            pane_index=drawing_data.pane_index
         )
         db.add(db_drawing)
         db.commit()
@@ -988,6 +990,7 @@ def update_drawing(drawing_id: int, drawing_data: schemas.DrawingBase, db: Sessi
         db_drawing.line_width = drawing_data.line_width
         db_drawing.line_style = drawing_data.line_style
         db_drawing.text = drawing_data.text
+        db_drawing.pane_index = drawing_data.pane_index
         db.commit()
         db.refresh(db_drawing)
         return db_drawing
