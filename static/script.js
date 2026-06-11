@@ -1,4 +1,12 @@
 console.log("[script.js] Script loading started...");
+
+// Nomi delle liste di sistema (sola lettura, auto-popolate)
+const SYSTEM_LIST_NAMES = ['USD', 'EUR'];
+
+function isSystemList(name) {
+    return SYSTEM_LIST_NAMES.includes(name);
+}
+
 let activeView = 'monitoring';
 let activeListId = null;
 let activeTicker = null;
@@ -55,6 +63,10 @@ function initChartSlots() {
             currentSeriesType: 'candle',
             canvas: null,
             ctx: null,
+            compareTicker: '',
+            compareListId: '',
+            compareSeries: null,
+            compareData: [],
         };
     }
     activeChartIndex = 0;
@@ -92,6 +104,14 @@ function activateChartSlot(index) {
     reattachDrawingListeners();
     if (slot.ticker) loadFundamentalData(slot.ticker);
     // Show last candle in legend when switching slots
+    // Sync price scale mode for compare ticker
+    if (slot.chart) {
+        const compareTicker = slot.compareTicker || document.getElementById('compare-ticker-select')?.value || '';
+        const scaleMode = parseInt(document.getElementById('scale-type-select')?.value || '0');
+        const effectiveMode = compareTicker ? 3 : scaleMode;
+        slot.chart.applyOptions({ rightPriceScale: { mode: effectiveMode } });
+    }
+
     if (slot.chart) syncCrosshairListener(slot.chart, {});
     setTimeout(() => resizeDrawingCanvas(), 50);
 }
@@ -110,6 +130,11 @@ function saveActiveSlotState() {
     slot.activePriceData = activePriceData;
     slot.canvas = drawingCanvas;
     slot.ctx = drawingCtx;
+    // Save compare state (the compareSeries lives on the chart, so it's already saved via slot.chart)
+    slot.compareListId = document.getElementById('compare-list-select')?.value || '';
+    slot.compareTicker = document.getElementById('compare-ticker-select')?.value || '';
+    slot.compareSeries = chartSlots[activeChartIndex]?.compareSeries || null;
+    slot.compareData = chartSlots[activeChartIndex]?.compareData || [];
 }
 
 function restoreSlotState(index) {
@@ -126,6 +151,17 @@ function restoreSlotState(index) {
     activePriceData = slot.activePriceData;
     drawingCanvas = slot.canvas;
     drawingCtx = slot.ctx;
+    // Sync compare list/ticker selects with the slot state
+    const compareListSelect = document.getElementById('compare-list-select');
+    if (compareListSelect && slot.compareListId) {
+        compareListSelect.value = slot.compareListId;
+    }
+    const compareSelect = document.getElementById('compare-ticker-select');
+    if (compareSelect) {
+        compareSelect.value = slot.compareTicker || '';
+    }
+    // Refresh compare ticker list to reflect current list contents
+    refreshCompareTickers();
 }
 function setChartCount(n) {
     n = Math.max(1, Math.min(4, n));
@@ -458,6 +494,17 @@ const syncCrosshairListener = (sourceChart, param) => {
                                     }
                                 });
                             });
+
+                        // Comparison ticker info
+                        if (ownerSlot.compareSeries && ownerSlot.compareTicker) {
+                            const compareMap = ownerSlot.seriesDataMap.get(ownerSlot.compareSeries);
+                            const compareData = tk && compareMap ? compareMap.get(tk) : null;
+                            if (compareData && compareData.value !== undefined) {
+                                const compareColor = '#ff9800';
+                                html += ` &nbsp;<span style="color:${compareColor}">${ownerSlot.compareTicker}: ${compareData.value.toFixed(2)}</span>`;
+                            }
+                        }
+
                         legend.innerHTML = html;
                     } else { legend.style.display = 'none'; }
                 } else if (item.series && item.series.length > 0) {
@@ -957,6 +1004,60 @@ async function apiCall(endpoint, method = 'GET', body = null) {
     }
 }
 
+function populateCompareSelect(symbols) {
+    const select = document.getElementById('compare-ticker-select');
+    if (!select) return;
+    const currentVal = select.value;
+    select.innerHTML = '<option value="">Nessuno</option>';
+    symbols.forEach(s => {
+        const opt = document.createElement('option');
+        opt.value = s;
+        opt.textContent = s;
+        select.appendChild(opt);
+    });
+    if (currentVal && symbols.includes(currentVal)) {
+        select.value = currentVal;
+    }
+}
+
+async function refreshCompareTickers() {
+    const listSelect = document.getElementById('compare-list-select');
+    const listId = listSelect?.value;
+    if (!listId) {
+        const tickerSelect = document.getElementById('compare-ticker-select');
+        if (tickerSelect) {
+            tickerSelect.innerHTML = '<option value="">Nessuno</option>';
+        }
+        return;
+    }
+
+    try {
+        const lists = await apiCall(`/lists/?t=${Date.now()}`);
+        let tickers = [];
+
+        if (listId === 'all') {
+            const seen = new Set();
+            lists.forEach(l => {
+                (l.tickers || []).forEach(t => {
+                    if (!seen.has(t.symbol)) {
+                        seen.add(t.symbol);
+                        tickers.push(t.symbol);
+                    }
+                });
+            });
+        } else {
+            const list = lists.find(l => l.id == listId);
+            if (list) {
+                tickers = (list.tickers || []).map(t => t.symbol);
+            }
+        }
+
+        populateCompareSelect(tickers);
+    } catch (err) {
+        console.error("[refreshCompareTickers] Error:", err);
+    }
+}
+
 // --- UI Actions ---
 async function loadLists() {
     console.log("[loadLists] Starting...");
@@ -991,6 +1092,11 @@ async function loadLists() {
 
         populate(select);
         populate(listSelect);
+
+        // Populate compare-list-select
+        const compareListSelect = document.getElementById('compare-list-select');
+        populate(compareListSelect);
+
         console.log("[loadLists] Population complete.");
 
         // Auto-select if there's only one list or if activeListId is null but lists exist
@@ -1002,7 +1108,10 @@ async function loadLists() {
         if (activeListId) {
             console.log("[loadLists] Setting select value to:", activeListId);
             select.value = activeListId;
-            loadListDetails(activeListId);
+            // Default compare list = main list
+            if (compareListSelect) compareListSelect.value = activeListId;
+            await loadListDetails(activeListId);
+            await refreshCompareTickers();
         }
     } catch (err) {
         console.error("[loadLists] ERROR:", err);
@@ -1145,15 +1254,26 @@ async function loadListDetails(listId, forceFirstTicker = false) {
     }
 
     // Update Ticker List in Management
+    const isSystem = isSystemList(list.name);
     const container = document.getElementById('current-list-tickers');
     container.innerHTML = `<h4>Tickers in this list (${list.tickers.length}):</h4>`;
     list.tickers.forEach(t => {
         const tag = document.createElement('div');
         tag.className = 'ticker-tag';
         const displayName = t.name ? `${t.symbol} - ${t.name}` : t.symbol;
-        tag.innerHTML = `${displayName} <span style="cursor:pointer; margin-left:5px" onclick="removeTicker('${t.symbol}')">×</span>`;
+        const removeBtn = isSystem ? '' : `<span style="cursor:pointer; margin-left:5px" onclick="removeTicker('${t.symbol}')">×</span>`;
+        tag.innerHTML = `${displayName} ${removeBtn}`;
         container.appendChild(tag);
     });
+
+    // Hide edit/delete buttons for system lists
+    document.querySelectorAll('#lists-view .edit-controls').forEach(el => el.style.display = isSystem ? 'none' : '');
+    const delBtn = document.getElementById('delete-list-btn');
+    if (delBtn) delBtn.style.display = isSystem ? 'none' : '';
+    const createBtn = document.getElementById('create-list-btn');
+    if (createBtn) createBtn.style.display = isSystem ? 'none' : '';
+    const newListInput = document.getElementById('new-list-name');
+    if (newListInput) newListInput.style.display = isSystem ? 'none' : '';
 
     // Disable modification buttons if "All" is selected
     const isAll = (listId === 'all');
@@ -1259,6 +1379,29 @@ document.getElementById('scale-type-select').addEventListener('change', () => {
     if (activeTicker) updateChart(activeTicker);
 });
 
+document.getElementById('compare-ticker-select').addEventListener('change', function () {
+    const slot = chartSlots[activeChartIndex];
+    if (slot) {
+        slot.compareTicker = this.value;
+    }
+    if (activeTicker) updateChart(activeTicker);
+});
+
+document.getElementById('compare-list-select').addEventListener('change', async function () {
+    const slot = chartSlots[activeChartIndex];
+    if (slot) {
+        slot.compareListId = this.value;
+    }
+    // Refresh ticker select for the selected list
+    await refreshCompareTickers();
+    // Reset compare ticker since the old one is likely not in the new list
+    const slotNow = chartSlots[activeChartIndex];
+    if (slotNow) {
+        slotNow.compareTicker = '';
+    }
+    if (activeTicker) updateChart(activeTicker);
+});
+
 async function updateChart(symbol) {
     if (!symbol) return;
     if (!mainChart || chartSlots.length === 0) return;
@@ -1309,7 +1452,10 @@ async function updateChart(symbol) {
         const priceField = document.getElementById('price-type-select')?.value || 'close';
         const scaleMode = parseInt(document.getElementById('scale-type-select')?.value || '0');
 
-        mainChart.applyOptions({ rightPriceScale: { mode: scaleMode } });
+        // If comparison is active, force IndexedTo100 mode; otherwise use user setting
+        const compareTicker = document.getElementById('compare-ticker-select')?.value || '';
+        const effectiveScaleMode = compareTicker ? 3 : scaleMode;
+        mainChart.applyOptions({ rightPriceScale: { mode: effectiveScaleMode } });
 
         const slot = chartSlots[activeChartIndex];
         if (!slot) return;
@@ -1355,6 +1501,9 @@ async function updateChart(symbol) {
 
         activePriceData = resampledData;
         setSeriesData(priceSeries, finalPriceData);
+
+        // Handle comparison ticker overlay
+        await handleCompareTicker(slot, timeframe);
 
         // Fetch and Render Indicators
         await applyIndicators(symbol);
@@ -1413,6 +1562,80 @@ async function updateChart(symbol) {
         }
     } catch (err) {
         console.error(`Error updating chart for ${symbol}:`, err);
+    }
+}
+
+async function handleCompareTicker(slot, timeframe) {
+    const compareSymbol = slot.compareTicker;
+    const compareSelect = document.getElementById('compare-ticker-select');
+
+    // Skip if compare ticker is same as main ticker
+    if (compareSymbol && (compareSymbol === slot.ticker || compareSymbol === activeTicker)) return;
+
+    // Remove existing compare series if we're turning off comparison
+    if (!compareSymbol && slot.compareSeries) {
+        try {
+            mainChart.removeSeries(slot.compareSeries);
+        } catch (e) { /* already removed */ }
+        slot.compareSeries = null;
+        slot.compareData = [];
+        return;
+    }
+
+    if (!compareSymbol) return;
+
+    // Ensure compare ticker data is available
+    try {
+        const res = await apiCall(`/tickers/${encodeURIComponent(compareSymbol)}/update-data/?years=1`, 'POST');
+        console.log(`[compare] Download OK:`, res);
+    } catch (err) {
+        console.warn(`[compare] Auto-update failed for ${compareSymbol}:`, err);
+    }
+
+    try {
+        const rawData = await apiCall(`/tickers/${compareSymbol}/data/`);
+        if (!rawData || rawData.length === 0) {
+            console.warn(`[compare] No data for ${compareSymbol}`);
+            return;
+        }
+
+        const formatted = rawData.map(d => ({
+            time: d.date.split('T')[0],
+            open: parseFloat(d.open),
+            high: parseFloat(d.high),
+            low: parseFloat(d.low),
+            close: parseFloat(d.close),
+            adj_close: parseFloat(d.adj_close),
+            volume: parseInt(d.volume) || 0
+        })).filter(d => !isNaN(d.close));
+
+        formatted.sort((a, b) => a.time.localeCompare(b.time));
+        const uniqueDaily = deduplicateData(formatted);
+        const resampled = resampleData(uniqueDaily, timeframe);
+
+        const lineData = resampled.map(d => ({
+            time: d.time,
+            value: d.close
+        }));
+
+        slot.compareData = resampled;
+
+        if (!slot.compareSeries) {
+            slot.compareSeries = mainChart.addLineSeries({
+                color: '#ff9800',
+                lineWidth: 2,
+                priceLineVisible: false,
+                lastValueVisible: true,
+                title: compareSymbol,
+            });
+        } else {
+            // Update title in case compare ticker changed
+            slot.compareSeries.applyOptions({ title: compareSymbol });
+        }
+
+        setSeriesData(slot.compareSeries, lineData);
+    } catch (err) {
+        console.error(`[compare] Error loading ${compareSymbol}:`, err);
     }
 }
 

@@ -129,6 +129,19 @@
                             <select id="scale-type-select">
                                 <option value="0">Lineare</option>
                                 <option value="1">Logaritmica</option>
+                                <option value="3">% (Index 100)</option>
+                            </select>
+                        </div>
+                        <div class="control-group">
+                            <label>Conf. Lista:</label>
+                            <select id="compare-list-select">
+                                <option value="">Seleziona...</option>
+                            </select>
+                        </div>
+                        <div class="control-group">
+                            <label>Confronta:</label>
+                            <select id="compare-ticker-select">
+                                <option value="">Nessuno</option>
                             </select>
                         </div>
                         <div class="control-group">
@@ -395,18 +408,18 @@
                 <div style="display: flex; gap: 10px; align-items: center;">
                     <input type="text" id="new-list-name" placeholder="List Name" style="flex: 1;">
                     <button id="create-list-btn">Create List</button>
-                    <span style="color: var(--text-color); font-weight: bold; margin-left: 20px;">Edit Selected List</span>
-                    <div style="display: flex; gap: 10px; flex: 1;">
+                    <span class="edit-controls" style="color: var(--text-color); font-weight: bold; margin-left: 20px;">Edit Selected List</span>
+                    <div class="edit-controls" style="display: flex; gap: 10px; flex: 1;">
                         <input type="text" id="add-ticker-input" placeholder="e.g. AAPL" style="flex: 1;">
                         <button id="add-ticker-btn">Add Ticker</button>
                     </div>
-                    <div style="display: flex; gap: 5px;">
+                    <div class="edit-controls" style="display: flex; gap: 5px;">
                         <select id="index-import-select" style="width: auto;">
                             <option value="">Index...</option>
                         </select>
                         <button id="import-index-btn" style="white-space: nowrap;">Import</button>
                     </div>
-                    <div style="display: flex; gap: 5px; align-items: center;">
+                    <div class="edit-controls" style="display: flex; gap: 5px; align-items: center;">
                         <input type="file" id="csv-upload-input" accept=".csv" style="display: none;">
                         <button id="upload-csv-btn" title="Import CSV (Semicolon separated)">
                             Import CSV
@@ -421,9 +434,9 @@
                             </span>
                         </button>
                     </div>
-                    <button id="clear-list-btn" style="background-color: var(--danger-color); white-space: nowrap;">Clear</button>
+                    <button id="clear-list-btn" class="edit-controls" style="background-color: var(--danger-color); white-space: nowrap;">Clear</button>
                 </div>
-                <div style="display: flex; gap: 10px; margin-top: 8px;">
+                <div class="edit-controls" style="display: flex; gap: 10px; margin-top: 8px;">
                     <button id="export-csv-btn" class="secondary" style="font-size: 0.85rem;">Export List (CSV)</button>
                     <button id="fetch-missing-names-btn" class="secondary" style="font-size: 0.85rem;">Cerca Nomi</button>
                 </div>

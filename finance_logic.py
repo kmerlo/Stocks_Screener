@@ -777,37 +777,52 @@ class FinanceLogic:
         print(f"DEBUG: Screening complete. Total time: {datetime.now() - start_time}")
         return final_results
 
-    def get_orphan_indicators(self, db: Session):
-        """Identifies indicator keys present in ScreeningValue but not in any ScreeningColumn."""
-        all_cached_keys = db.query(ScreeningValue.indicator_key).distinct().all()
-        all_cached_keys = [k[0] for k in all_cached_keys]
+    def get_orphan_indicators(self, market_db: Session):
+        """Identifies indicator keys present in ScreeningValue (market.db) but not in any ScreeningColumn (config.db)."""
+        from database import SessionLocalConfig
+        config_db = SessionLocalConfig()
+        try:
+            all_cached_keys = market_db.query(ScreeningValue.indicator_key).distinct().all()
+            all_cached_keys = [k[0] for k in all_cached_keys]
 
-        active_columns = db.query(ScreeningColumn).all()
-        active_keys = set()
-        for col in active_columns:
-            params = json.loads(col.parameters) if isinstance(col.parameters, str) else col.parameters
-            # We need to handle potential multi-column results (bbands -> BBL, BBM, BBU)
-            # This logic is slightly duplicated from the calculation loop.
-            base_key = self.generate_indicator_key(col.indicator_type, params, col.timeframe)
-            active_keys.add(base_key) 
-            # Add common prefixes for multi-column ones
-            if col.indicator_type.lower() in ['bbands', 'stoch', 'donchian', 'supertrend']:
-                # The keys in DB look like "bbands_period20_D_BBL"
-                # So we check if cached_key STARTS WITH base_key
-                pass # Handled below
+            active_columns = config_db.query(ScreeningColumn).all()
+            active_keys = set()
+            for col in active_columns:
+                params = json.loads(col.parameters) if isinstance(col.parameters, str) else col.parameters
+                base_key = self.generate_indicator_key(col.indicator_type, params, col.timeframe)
+                active_keys.add(base_key) 
+                if col.indicator_type.lower() in ['bbands', 'stoch', 'donchian', 'supertrend']:
+                    pass # Handled below
 
-        orphans = []
-        for k in all_cached_keys:
-            is_active = False
-            for ak in active_keys:
-                if k == ak or k.startswith(ak + "_"):
-                    is_active = True
-                    break
-            if not is_active:
-                count = db.query(ScreeningValue).filter(ScreeningValue.indicator_key == k).count()
-                orphans.append({"indicator_key": k, "count": count})
-        
-        return orphans
+            orphans = []
+            for k in all_cached_keys:
+                is_active = False
+                for ak in active_keys:
+                    if k == ak or k.startswith(ak + "_"):
+                        is_active = True
+                        break
+                if not is_active:
+                    count = market_db.query(ScreeningValue).filter(ScreeningValue.indicator_key == k).count()
+                    orphans.append({"indicator_key": k, "count": count})
+            
+            return orphans
+        finally:
+            config_db.close()
+
+    def delete_orphans(self, db: Session, indicator_keys: list):
+        """Deletes records from ScreeningValue for the given orphan indicator keys."""
+        try:
+            count = 0
+            for key in indicator_keys:
+                deleted = db.query(ScreeningValue).filter(ScreeningValue.indicator_key == key).delete()
+                count += deleted
+            db.commit()
+            print(f"Deleted {count} orphan records for keys: {indicator_keys}")
+            return True, count
+        except Exception as e:
+            db.rollback()
+            print(f"Error deleting orphans: {e}")
+            return False, 0
 
     def delete_all_prices(self, db: Session):
         """Deletes ALL records from the PriceData table."""

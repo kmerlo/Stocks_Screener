@@ -23,6 +23,14 @@ from contextlib import asynccontextmanager
 from fastapi.responses import JSONResponse
 from fastapi.exceptions import RequestValidationError
 
+# --- Constant definitions ---
+
+# Suffissi che identificano ticker di borse europee (EUR list)
+EUR_SUFFIXES = (".MI", ".DE", ".AS", ".PA", ".MC")
+
+# Nomi delle liste di sistema (auto-create, non modificabili manualmente)
+SYSTEM_LIST_NAMES = {"USD", "EUR"}
+
 def _compute_dividend_cash_delta(price: float, quantity: float, exchange_rate: float, tax_rate: float) -> float:
     """
     Compute the cash impact (signed) of a DIVIDEND transaction in the portfolio's base currency.
@@ -55,10 +63,115 @@ def init_system_sheets():
     finally:
         db.close()
 
+# --- Helper functions per le liste di sistema USD/EUR ---
+
+def _is_eur_ticker(symbol: str) -> bool:
+    """True se il ticker termina con uno dei suffissi EUR_SUFFIXES."""
+    upper = symbol.upper().strip()
+    return upper.endswith(EUR_SUFFIXES)
+
+
+def _sync_ticker_to_currency_lists(db, symbol: str, name: str = None):
+    """Assicura che un ticker sia presente nella lista USD o EUR (a seconda del suffisso)."""
+    target_name = "EUR" if _is_eur_ticker(symbol) else "USD"
+    target_list = db.query(db_mod.TickerList).filter(
+        db_mod.TickerList.name == target_name
+    ).first()
+    if not target_list:
+        return
+
+    existing = db.query(db_mod.Ticker).filter(
+        db_mod.Ticker.list_id == target_list.id,
+        db_mod.Ticker.symbol == symbol
+    ).first()
+    if existing:
+        return
+
+    db.add(db_mod.Ticker(symbol=symbol, name=name, list_id=target_list.id))
+
+
+def _unsync_ticker_from_currency_lists(db, symbol: str, exclude_list_id: int):
+    """Rimuove un ticker da USD/EUR se non è più presente in nessun'altra lista non-sistema."""
+    for list_name in SYSTEM_LIST_NAMES:
+        target_list = db.query(db_mod.TickerList).filter(
+            db_mod.TickerList.name == list_name
+        ).first()
+        if not target_list:
+            continue
+
+        other_count = db.query(db_mod.Ticker).filter(
+            db_mod.Ticker.symbol == symbol,
+            db_mod.Ticker.list_id != exclude_list_id,
+            ~db_mod.Ticker.list_id.in_(
+                db.query(db_mod.TickerList.id).filter(
+                    db_mod.TickerList.name.in_(SYSTEM_LIST_NAMES)
+                )
+            )
+        ).count()
+
+        if other_count == 0:
+            db.query(db_mod.Ticker).filter(
+                db_mod.Ticker.list_id == target_list.id,
+                db_mod.Ticker.symbol == symbol
+            ).delete(synchronize_session=False)
+
+
+def _rebuild_currency_lists(db):
+    """Ricostruisce da zero USD/EUR partendo da tutti i ticker nelle liste non-sistema."""
+    system_lists = db.query(db_mod.TickerList).filter(
+        db_mod.TickerList.name.in_(SYSTEM_LIST_NAMES)
+    ).all()
+    system_list_ids = [l.id for l in system_lists]
+
+    # Svuota le liste di sistema
+    for sid in system_list_ids:
+        db.query(db_mod.Ticker).filter(
+            db_mod.Ticker.list_id == sid
+        ).delete(synchronize_session=False)
+
+    if not system_list_ids:
+        return
+
+    # Raccogli tutti i ticker da liste non-sistema
+    all_tickers = db.query(db_mod.Ticker).filter(
+        ~db_mod.Ticker.list_id.in_(system_list_ids)
+    ).all()
+
+    seen = set()
+    for t in all_tickers:
+        target_name = "EUR" if _is_eur_ticker(t.symbol) else "USD"
+        target_list = next((l for l in system_lists if l.name == target_name), None)
+        if not target_list:
+            continue
+        key = (target_list.id, t.symbol)
+        if key in seen:
+            continue
+        seen.add(key)
+        db.add(db_mod.Ticker(symbol=t.symbol, name=t.name, list_id=target_list.id))
+
+
+def init_system_lists():
+    """Crea le liste USD/EUR se non esistono e le ripopola."""
+    db = db_mod.SessionLocal()
+    try:
+        for name in SYSTEM_LIST_NAMES:
+            existing = db.query(db_mod.TickerList).filter(
+                db_mod.TickerList.name == name
+            ).first()
+            if not existing:
+                db.add(db_mod.TickerList(name=name))
+        db.commit()
+        _rebuild_currency_lists(db)
+        db.commit()
+    finally:
+        db.close()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     db_mod.init_db()
     init_system_sheets()
+    init_system_lists()
     yield
 
 app = FastAPI(title="Financial Screener API", lifespan=lifespan)
@@ -109,6 +222,11 @@ def get_market_db():
 
 @app.post("/lists/", response_model=schemas.TickerList)
 def create_list(list_data: schemas.TickerListCreate, db: Session = Depends(get_db)):
+    if list_data.name in SYSTEM_LIST_NAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Impossibile creare una lista con nome riservato '{list_data.name}'"
+        )
     try:
         logger.info(f"Creating list with name: {list_data.name}")
         db_list = db_mod.TickerList(name=list_data.name)
@@ -246,8 +364,17 @@ def delete_list(list_id: int, db: Session = Depends(get_db)):
             logger.warning(f"List ID {list_id} not found for deletion.")
             raise HTTPException(status_code=404, detail="List not found")
         
+        if db_list.name in SYSTEM_LIST_NAMES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Impossibile eliminare la lista di sistema '{db_list.name}'"
+            )
+        
         list_name = db_list.name
         db.delete(db_list)
+        db.commit()
+        # Ricostruisce USD/EUR dopo l'eliminazione
+        _rebuild_currency_lists(db)
         db.commit()
         logger.info(f"Successfully deleted list: {list_name}")
         return {"message": f"List '{list_name}' deleted"}
@@ -264,11 +391,20 @@ def add_ticker_to_list(list_id: int, ticker: schemas.TickerCreate, db: Session =
     if not db_list:
         raise HTTPException(status_code=404, detail="List not found")
 
+    if db_list.name in SYSTEM_LIST_NAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Impossibile aggiungere ticker manualmente alla lista di sistema '{db_list.name}'"
+        )
+
     symbol = ticker.symbol.upper().strip()
 
     # Check if ticker already in list
     existing = db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == list_id, db_mod.Ticker.symbol == symbol).first()
     if existing:
+        # Sync to currency list in case it was missed
+        _sync_ticker_to_currency_lists(db, existing.symbol, existing.name)
+        db.commit()
         return existing
 
     # Validate ticker via yfinance and fetch company name
@@ -286,16 +422,31 @@ def add_ticker_to_list(list_id: int, ticker: schemas.TickerCreate, db: Session =
 
     db_ticker = db_mod.Ticker(symbol=symbol, name=company_name, list_id=list_id)
     db.add(db_ticker)
+    # Sync to currency list
+    _sync_ticker_to_currency_lists(db, symbol, company_name)
     db.commit()
     db.refresh(db_ticker)
     return db_ticker
 
 @app.delete("/lists/{list_id}/tickers/{symbol}")
 def remove_ticker_from_list(list_id: int, symbol: str, db: Session = Depends(get_db)):
+    db_list = db.query(db_mod.TickerList).filter(db_mod.TickerList.id == list_id).first()
+    if not db_list:
+        raise HTTPException(status_code=404, detail="List not found")
+
+    if db_list.name in SYSTEM_LIST_NAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Impossibile rimuovere ticker manualmente dalla lista di sistema '{db_list.name}'"
+        )
+
     db_ticker = db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == list_id, db_mod.Ticker.symbol == symbol).first()
     if not db_ticker:
         raise HTTPException(status_code=404, detail="Ticker not found in list")
     db.delete(db_ticker)
+    db.commit()
+    # Uns sync from currency lists if no other non-system list has this ticker
+    _unsync_ticker_from_currency_lists(db, symbol, list_id)
     db.commit()
     return {"message": "Ticker removed"}
 
@@ -307,7 +458,15 @@ def clear_list_tickers(list_id: int, db: Session = Depends(get_db)):
         logger.warning(f"List ID {list_id} not found for clearing.")
         raise HTTPException(status_code=404, detail="List not found")
     
+    if db_list.name in SYSTEM_LIST_NAMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Impossibile svuotare manualmente la lista di sistema '{db_list.name}'"
+        )
+    
     deleted_count = db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == list_id).delete()
+    # Ricostruisce USD/EUR dopo lo svuotamento
+    _rebuild_currency_lists(db)
     db.commit()
     logger.info(f"Successfully removed {deleted_count} tickers from list {db_list.name}")
     return {"message": f"All tickers ({deleted_count}) removed from list"}
@@ -343,6 +502,20 @@ def fetch_missing_ticker_names(list_id: int, db: Session = Depends(get_db)):
             logger.warning(f"Failed to fetch name for {db_ticker.symbol}: {e}")
             continue
             
+    # Aggiorna i nomi anche nelle liste di sistema USD/EUR
+    if updated_count > 0:
+        system_lists = db.query(db_mod.TickerList).filter(
+            db_mod.TickerList.name.in_(SYSTEM_LIST_NAMES)
+        ).all()
+        for db_ticker in tickers_missing_name:
+            for sl in system_lists:
+                system_ticker = db.query(db_mod.Ticker).filter(
+                    db_mod.Ticker.list_id == sl.id,
+                    db_mod.Ticker.symbol == db_ticker.symbol
+                ).first()
+                if system_ticker and not system_ticker.name:
+                    system_ticker.name = db_ticker.name
+
     db.commit()
     return {"message": f"Nomi recuperati e aggiornati con successo per {updated_count} ticker.", "updated_count": updated_count}
 
@@ -355,6 +528,15 @@ def list_indices():
 @app.post("/lists/{list_id}/import-index/{index_name}")
 def import_index_tickers(list_id: int, index_name: str, db: Session = Depends(get_db)):
     try:
+        db_list = db.query(db_mod.TickerList).filter(db_mod.TickerList.id == list_id).first()
+        if not db_list:
+            raise HTTPException(status_code=404, detail="List not found")
+        if db_list.name in SYSTEM_LIST_NAMES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Impossibile importare ticker nella lista di sistema '{db_list.name}'"
+            )
+
         ticker_data = finance_logic.get_tickers_by_index(index_name)
         added = []
         skipped = []
@@ -374,11 +556,18 @@ def import_index_tickers(list_id: int, index_name: str, db: Session = Depends(ge
                     skipped.append(symbol)
             elif name and existing.name != name:
                 existing.name = name
+
+        # Sync tutti i ticker aggiunti alle liste di sistema
+        for symbol in added:
+            entry = next((e for e in ticker_data if e["symbol"] == symbol), None)
+            _sync_ticker_to_currency_lists(db, symbol, entry["name"] if entry else None)
         db.commit()
         msg = f"Added {len(added)} tickers from {index_name}"
         if skipped:
             msg += f" ({len(skipped)} skipped)"
         return {"message": msg, "tickers": added}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error importing index {index_name}: {e}")
         db.rollback()
@@ -387,6 +576,15 @@ def import_index_tickers(list_id: int, index_name: str, db: Session = Depends(ge
 @app.post("/lists/{list_id}/upload-csv/")
 async def upload_csv(list_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
     try:
+        db_list = db.query(db_mod.TickerList).filter(db_mod.TickerList.id == list_id).first()
+        if not db_list:
+            raise HTTPException(status_code=404, detail="List not found")
+        if db_list.name in SYSTEM_LIST_NAMES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Impossibile importare CSV nella lista di sistema '{db_list.name}'"
+            )
+
         content = await file.read()
         logger.info(f"Uploading CSV for list {list_id}, content length: {len(content)}")
         
@@ -408,9 +606,17 @@ async def upload_csv(list_id: int, file: UploadFile = File(...), db: Session = D
                 added.append(symbol)
             elif name and existing.name != name:
                 existing.name = name
+
+        # Sync tutti i ticker aggiunti alle liste di sistema
+        for entry in ticker_data:
+            if entry["symbol"] in added:
+                _sync_ticker_to_currency_lists(db, entry["symbol"], entry["name"])
+
         db.commit()
         logger.info(f"Successfully added {len(added)} tickers to list {list_id}")
         return {"message": f"Added {len(added)} tickers from CSV", "tickers": added}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in upload_csv: {e}")
         traceback.print_exc()
@@ -427,21 +633,21 @@ def update_ticker_data(symbol: str, years: int = None, db: Session = Depends(get
     return {"message": f"Data updated for {symbol} ({period})"}
 
 @app.post("/tickers/{symbol}/extend-history/{years}")
-def extend_ticker_history(symbol: str, years: int, db: Session = Depends(get_db)):
+def extend_ticker_history(symbol: str, years: int, db: Session = Depends(get_market_db)):
     success = finance_logic.extend_history(db, symbol, years)
     if not success:
         raise HTTPException(status_code=400, detail="Failed to extend history")
     return {"message": f"History extended by {years} years for {symbol}"}
 
 @app.delete("/tickers/{symbol}/data/")
-def delete_ticker_pricing_data(symbol: str, db: Session = Depends(get_db)):
+def delete_ticker_pricing_data(symbol: str, db: Session = Depends(get_market_db)):
     success, num_deleted = finance_logic.delete_ticker_data(db, symbol)
     if not success:
         raise HTTPException(status_code=400, detail=f"Failed to delete data for {symbol}")
     return {"message": f"Deleted {num_deleted} price records for {symbol}"}
 
 @app.delete("/tickers/{symbol}/data-from/")
-def delete_ticker_data_from(symbol: str, date: str, db: Session = Depends(get_db)):
+def delete_ticker_data_from(symbol: str, date: str, db: Session = Depends(get_market_db)):
     try:
         from datetime import datetime
         start_date = datetime.fromisoformat(date)
@@ -687,29 +893,36 @@ def run_dynamic_screening(request: schemas.DynamicScreeningRequest, db: Session 
 # --- Maintenance Endpoints ---
 
 @app.get("/maintenance/orphans", response_model=List[schemas.OrphanIndicator])
-def get_orphans(db: Session = Depends(get_db)):
+def get_orphans(db: Session = Depends(get_market_db)):
     return finance_logic.get_orphan_indicators(db)
 
 @app.post("/maintenance/delete-orphans")
-def delete_orphans(request: schemas.DeleteOrphansRequest, db: Session = Depends(get_db)):
+def delete_orphans(request: schemas.DeleteOrphansRequest, db: Session = Depends(get_market_db)):
     success, count = finance_logic.delete_orphans(db, request.indicator_keys)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to delete orphans")
     return {"message": f"Deleted {count} orphan records"}
 
 @app.post("/maintenance/clear-prices")
-def clear_prices(db: Session = Depends(get_db)):
+def clear_prices(db: Session = Depends(get_market_db)):
     success, count = finance_logic.delete_all_prices(db)
     if not success:
         raise HTTPException(status_code=500, detail="Failed to clear prices")
     return {"message": f"Successfully deleted {count} price records"}
 
 @app.post("/maintenance/vacuum")
-def vacuum_db(db: Session = Depends(get_db)):
-    success = finance_logic.vacuum_database(db)
-    if not success:
-        raise HTTPException(status_code=500, detail="Failed to vacuum database")
-    return {"message": "Database optimized successfully (VACUUM)"}
+def vacuum_db():
+    """VACUUM both config.db and market.db to optimize file sizes."""
+    config_ok = finance_logic.vacuum_database(db_mod.SessionLocalConfig())
+    market_ok = finance_logic.vacuum_database(db_mod.SessionLocalMarket())
+    if config_ok and market_ok:
+        return {"message": "Both databases optimized successfully (VACUUM)"}
+    elif config_ok:
+        return {"message": "Market database VACUUM failed; config database optimized successfully"}
+    elif market_ok:
+        return {"message": "Config database VACUUM failed; market database optimized successfully"}
+    else:
+        raise HTTPException(status_code=500, detail="Failed to vacuum both databases")
 
 # --- Drawing & Alarm Endpoints ---
 
