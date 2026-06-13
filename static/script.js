@@ -604,7 +604,8 @@ async function saveTemplate() {
                 _priceLine: i.priceLineVisible !== false,
                 _lastValue: i.lastValueVisible !== false,
                 _showLegend: i.showLegend !== false,
-                _hidden: i.hidden === true
+                _hidden: i.hidden === true,
+                ...(i.hLines ? { _hLines: i.hLines } : {})
             }),
             pane_index: i.paneIndex,
             color: i.color || getRandomColor(i.type)
@@ -642,7 +643,8 @@ async function saveAsTemplate() {
                 _priceLine: i.priceLineVisible !== false,
                 _lastValue: i.lastValueVisible !== false,
                 _showLegend: i.showLegend !== false,
-                _hidden: i.hidden === true
+                _hidden: i.hidden === true,
+                ...(i.hLines ? { _hLines: i.hLines } : {})
             }),
             pane_index: i.paneIndex,
             color: i.color || getRandomColor(i.type)
@@ -704,9 +706,10 @@ async function applyTemplate(id) {
             const lastValueVisible = rawParams._lastValue !== undefined ? rawParams._lastValue : true;
             const showLegend = rawParams._showLegend !== undefined ? rawParams._showLegend : true;
             const hidden = rawParams._hidden === true;
+            const hLines = rawParams._hLines || undefined;
 
             // Remove visual meta-keys from params
-            const { _color, _lineStyle, _lineWidth, _priceLine, _lastValue, _showLegend, _hidden, ...cleanParams } = rawParams;
+            const { _color, _lineStyle, _lineWidth, _priceLine, _lastValue, _showLegend, _hidden, _hLines, ...cleanParams } = rawParams;
             activeIndicators.push({
                 id: `${ind.indicator_type}_${Date.now()}_${Math.random()}`,
                 type: ind.indicator_type,
@@ -714,6 +717,7 @@ async function applyTemplate(id) {
                 paneIndex: ind.pane_index ?? 0,
                 color, lineStyle, lineWidth,
                 priceLineVisible, lastValueVisible, showLegend, hidden,
+                hLines,
                 seriesList: []
             });
         });
@@ -1948,6 +1952,90 @@ function openIndicatorModal(type, existingId, isScreening = false, screeningColI
     widthInput.value = lineWidth;
     document.getElementById('modal-line-width-val').textContent = lineWidth;
 
+    // Horizontal reference lines section
+    const hlinesSection = document.getElementById('modal-hlines-section');
+    const container = document.getElementById('modal-hlines-container');
+    const isSubplot = SUBPLOT_INDICATORS.includes(type);
+
+    if (isScreening || !isSubplot) {
+        hlinesSection.style.display = 'none';
+    } else {
+        hlinesSection.style.display = 'block';
+        let hLines;
+        if (existingId) {
+            const ind = activeIndicators.find(i => i.id === existingId);
+            hLines = ind && ind.hLines ? ind.hLines.map(h => ({ ...h })) : getDefaultHLines(type);
+        } else {
+            hLines = getDefaultHLines(type);
+        }
+        container.innerHTML = '';
+        hLines.forEach((h, i) => {
+            const row = document.createElement('div');
+            row.className = 'modal-form-row hline-row';
+            row.style.cssText = 'margin-top:6px;flex-wrap:wrap;gap:6px;padding:6px;border:1px solid var(--border-color);border-radius:4px;';
+            const showLabelChecked = h.showLabel !== false;
+            row.innerHTML = `
+                <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-weight:normal;min-width:60px;">
+                    <input type="checkbox" class="hline-enabled" data-idx="${i}" ${h.enabled ? 'checked' : ''}> L${i+1}
+                </label>
+                <input type="number" class="hline-value" data-idx="${i}" value="${h.value}" step="any" style="width:70px;">
+                <span style="position:relative;display:inline-flex;align-items:center;gap:2px;">
+                    <input type="color" class="hline-color" id="hline-color-input-${i}" data-idx="${i}" value="${h.color}" style="width:32px;height:24px;padding:0;border:none;cursor:pointer;">
+                    <button type="button" class="color-presets-btn" data-target="hline-color-input-${i}" title="Colori predefiniti" style="transform:scale(0.8);">🎨</button>
+                    <div class="color-presets-popup"></div>
+                </span>
+                <div class="line-style-options" style="gap:2px;">
+                    <label class="line-style-option" style="gap:2px;">
+                        <input type="radio" name="modal-hline-style-${i}" value="0" ${h.style === 0 ? 'checked' : ''}>
+                        <span class="line-preview solid"></span>
+                    </label>
+                    <label class="line-style-option" style="gap:2px;">
+                        <input type="radio" name="modal-hline-style-${i}" value="1" ${h.style === 1 ? 'checked' : ''}>
+                        <span class="line-preview dashed"></span>
+                    </label>
+                    <label class="line-style-option" style="gap:2px;">
+                        <input type="radio" name="modal-hline-style-${i}" value="2" ${h.style === 2 ? 'checked' : ''}>
+                        <span class="line-preview dotted"></span>
+                    </label>
+                </div>
+                <label title="Mostra valore su asse Y" style="display:flex;align-items:center;gap:2px;cursor:pointer;font-weight:normal;font-size:11px;color:var(--text-secondary);">
+                    <input type="checkbox" class="hline-label" data-idx="${i}" ${showLabelChecked ? 'checked' : ''}> Y
+                </label>
+            `;
+            container.appendChild(row);
+        });
+
+        // Initialize color presets for new rows
+        container.querySelectorAll('.color-presets-popup').forEach(popup => {
+            popup.innerHTML = '';
+            (window.COLOR_PRESETS || ['#ff0000','#00ff00','#0000ff','#ffff00','#ff9800','#9c27b0','#00bcd4','#4caf50','#888888','#ffffff']).forEach(color => {
+                const swatch = document.createElement('button');
+                swatch.type = 'button';
+                swatch.className = 'color-swatch';
+                swatch.style.backgroundColor = color;
+                swatch.dataset.color = color;
+                swatch.title = color;
+                popup.appendChild(swatch);
+            });
+            popup.addEventListener('click', (e) => {
+                const swatch = e.target.closest('.color-swatch');
+                if (!swatch) return;
+                const input = popup.parentElement.querySelector('.hline-color');
+                if (input) { input.value = swatch.dataset.color; }
+                popup.classList.remove('active');
+            });
+        });
+        container.querySelectorAll('.color-presets-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const popup = btn.parentElement.querySelector('.color-presets-popup');
+                if (!popup) return;
+                document.querySelectorAll('.color-presets-popup').forEach(p => p.classList.remove('active'));
+                popup.classList.toggle('active');
+            });
+        });
+    }
+
     if (isScreening) {
         const tfSelect = document.getElementById('mp-timeframe');
         if (tfSelect) {
@@ -2012,6 +2100,18 @@ async function confirmIndicatorModal() {
     const lastValueVisible = document.getElementById('modal-last-value').checked;
     const showLegend = document.getElementById('modal-show-legend').checked;
 
+    // Read hLines from UI
+    const hLines = [];
+    document.querySelectorAll('#modal-hlines-container .hline-row').forEach(row => {
+        const idx = parseInt(row.querySelector('.hline-enabled').dataset.idx);
+        const enabled = row.querySelector('.hline-enabled').checked;
+        const value = parseFloat(row.querySelector('.hline-value').value) || 0;
+        const color = row.querySelector('.hline-color').value;
+        const style = parseInt(row.querySelector('input[name="modal-hline-style-' + idx + '"]:checked').value);
+        const showLabel = row.querySelector('.hline-label').checked;
+        hLines.push({ enabled, value, color, style, showLabel });
+    });
+
     if (_modalIndId) {
         // Editing existing
         const ind = activeIndicators.find(i => i.id === _modalIndId);
@@ -2023,19 +2123,24 @@ async function confirmIndicatorModal() {
             ind.priceLineVisible = priceLineVisible;
             ind.lastValueVisible = lastValueVisible;
             ind.showLegend = showLegend;
+            if (SUBPLOT_INDICATORS.includes(type)) {
+                ind.hLines = hLines;
+            }
         }
     } else {
         // New indicator
         const isOverlay = ['sma', 'ema', 'hma', 'supertrend', 'donchian', 'bbands', 'volume'].includes(type);
         const paneIndex = isOverlay ? 0 : (chartSlots[activeChartIndex].secondaryCharts.length + 1);
-        activeIndicators.push({
+        const ind = {
             id: `${type}_${Date.now()}`,
             type, params, paneIndex,
             color, lineStyle, lineWidth,
             priceLineVisible, lastValueVisible,
             showLegend,
-            seriesList: []
-        });
+            seriesList: [],
+            hLines: SUBPLOT_INDICATORS.includes(type) ? hLines : undefined
+        };
+        activeIndicators.push(ind);
     }
 
     closeIndicatorModal();
@@ -2065,6 +2170,19 @@ function removeIndicator(id) {
             });
         }
         ind.seriesList = [];
+    }
+
+    // Remove hLines series
+    if (ind.priceLines && ind.priceLines.length > 0) {
+        const chartObj = ind.paneIndex === 0
+            ? mainChart
+            : chartSlots[activeChartIndex].secondaryCharts.find(sc => sc.paneIndex === ind.paneIndex)?.chart;
+        if (chartObj) {
+            ind.priceLines.forEach(pl => {
+                try { chartObj.removeSeries(pl); } catch (e) { }
+            });
+        }
+        ind.priceLines = [];
     }
 
     activeIndicators.splice(indIndex, 1);
@@ -2206,6 +2324,17 @@ function renderIndicatorData(data) {
 
         ind.seriesList = [];
 
+        // Cleanup old hLines price lines before recreating
+        if (ind.priceLines && ind.priceLines.length > 0) {
+            const chartObj = ind.paneIndex === 0 ? mainChart : slotSecCharts.find(sc => sc.paneIndex === ind.paneIndex)?.chart;
+            if (chartObj) {
+                ind.priceLines.forEach(pl => {
+                    try { chartObj.removeSeries(pl); } catch (e) { }
+                });
+            }
+            ind.priceLines = [];
+        }
+
         // Construct the expected key(s) for this indicator type + params
         // Backend key: "{type}_{paramKey1}{paramValue1}_{paramKey2}{paramValue2}".lower()
         const paramStr = Object.entries(ind.params)
@@ -2322,6 +2451,35 @@ function renderIndicatorData(data) {
                 console.error(`Error plotting series for ${key}:`, e);
             }
         });
+
+        // Create horizontal reference lines for subplot indicators
+        if (ind.paneIndex > 0 && ind.hLines && ind.hLines.length > 0) {
+            const chartObj = ind.paneIndex === 0 ? mainChart : getOrCreatePane(ind.paneIndex, ind.type);
+            if (chartObj) {
+                if (!ind.priceLines) ind.priceLines = [];
+                ind.hLines.forEach(h => {
+                    if (!h.enabled) return;
+                    try {
+                        const hSeries = chartObj.addLineSeries({
+                            color: h.color,
+                            lineWidth: 1,
+                            lineStyle: h.style !== undefined ? h.style : 0,
+                            priceLineVisible: false,
+                            lastValueVisible: h.showLabel !== false,
+                            title: `${ind.type.toUpperCase()} ${h.value}`,
+                        });
+                        const lastDate = dates[dates.length - 1];
+                        hSeries.setData([
+                            { time: dates[0], value: h.value },
+                            { time: lastDate, value: h.value },
+                        ]);
+                        ind.priceLines.push(hSeries);
+                    } catch (e) {
+                        console.error(`[hLines] Error creating line series:`, e);
+                    }
+                });
+            }
+        }
     });
 
     // 5. Final sync trigger
@@ -2426,6 +2584,7 @@ function clearAllIndicators() {
             });
         }
         if (ind.seriesList) ind.seriesList = [];
+        if (ind.priceLines) ind.priceLines = [];
     });
 
     slot.secondaryCharts.forEach(sc => {
@@ -2486,6 +2645,53 @@ function getRandomColor(type) {
         stoch: '#9e9e9e', roc: '#795548', bbp: '#4caf50'
     };
     return colors[type] || '#' + Math.floor(Math.random() * 16777215).toString(16);
+}
+
+const SUBPLOT_INDICATORS = ['rsi', 'stoch', 'macd', 'roc', 'cci', 'atr', 'bbp'];
+
+function getDefaultHLines(type) {
+    const defaults = {
+        rsi: [
+            { enabled: true, value: 70,  color: '#ff0000', style: 1, showLabel: true },
+            { enabled: true, value: 50,  color: '#888888', style: 2, showLabel: false },
+            { enabled: true, value: 30,  color: '#00ff00', style: 1, showLabel: true }
+        ],
+        stoch: [
+            { enabled: true, value: 80,  color: '#ff0000', style: 1, showLabel: true },
+            { enabled: true, value: 50,  color: '#888888', style: 2, showLabel: false },
+            { enabled: true, value: 20,  color: '#00ff00', style: 1, showLabel: true }
+        ],
+        macd: [
+            { enabled: true, value: 0,   color: '#888888', style: 0, showLabel: true },
+            { enabled: false, value: 0,  color: '#888888', style: 0, showLabel: true },
+            { enabled: false, value: 0,  color: '#888888', style: 0, showLabel: true }
+        ],
+        cci: [
+            { enabled: true, value: 100, color: '#ff0000', style: 1, showLabel: true },
+            { enabled: true, value: 0,   color: '#888888', style: 0, showLabel: false },
+            { enabled: true, value: -100,color: '#00ff00', style: 1, showLabel: true }
+        ],
+        roc: [
+            { enabled: true, value: 0,   color: '#888888', style: 0, showLabel: true },
+            { enabled: false, value: 0,  color: '#888888', style: 0, showLabel: true },
+            { enabled: false, value: 0,  color: '#888888', style: 0, showLabel: true }
+        ],
+        atr: [
+            { enabled: false, value: 0,  color: '#888888', style: 0, showLabel: true },
+            { enabled: false, value: 0,  color: '#888888', style: 0, showLabel: true },
+            { enabled: false, value: 0,  color: '#888888', style: 0, showLabel: true }
+        ],
+        bbp: [
+            { enabled: true, value: 1.0, color: '#ff0000', style: 1, showLabel: true },
+            { enabled: true, value: 0.5, color: '#888888', style: 2, showLabel: false },
+            { enabled: true, value: 0.0, color: '#00ff00', style: 1, showLabel: true }
+        ]
+    };
+    return defaults[type] || [
+        { enabled: false, value: 0, color: '#888888', style: 0, showLabel: true },
+        { enabled: false, value: 0, color: '#888888', style: 0, showLabel: true },
+        { enabled: false, value: 0, color: '#888888', style: 0, showLabel: true }
+    ];
 }
 
 // ============================
