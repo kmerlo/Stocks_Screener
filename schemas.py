@@ -4,8 +4,10 @@ from datetime import datetime
 import json
 
 class TickerBase(BaseModel):
-    symbol: str
+    symbol: Optional[str] = None
     name: Optional[str] = None
+    isin: Optional[str] = None
+    mic: Optional[str] = "ETLX"
 
 class TickerCreate(TickerBase):
     pass

@@ -1159,8 +1159,9 @@ async function loadListDetails(listId, forceFirstTicker = false) {
         const seen = new Set();
         lists.forEach(l => {
             l.tickers.forEach(t => {
-                if (!seen.has(t.symbol)) {
-                    seen.add(t.symbol);
+                const key = t.symbol || t.isin || `id:${t.id}`;
+                if (!seen.has(key)) {
+                    seen.add(key);
                     allTickers.push(t);
                 }
             });
@@ -1193,8 +1194,8 @@ async function loadListDetails(listId, forceFirstTicker = false) {
     const baseCount = document.getElementById('base-row-count');
     if (baseCount) baseCount.textContent = '';
 
-    // Sort tickers alphabetically by symbol
-    list.tickers.sort((a, b) => a.symbol.localeCompare(b.symbol));
+    // Sort tickers alphabetically by symbol (fallback to isin)
+    list.tickers.sort((a, b) => (a.symbol || a.isin || '').localeCompare(b.symbol || b.isin || ''));
 
     // Update per-slot ticker selects
     document.querySelectorAll('.chart-slot-ticker').forEach((select, idx) => {
@@ -1203,16 +1204,18 @@ async function loadListDetails(listId, forceFirstTicker = false) {
         select.innerHTML = '<option value="">Seleziona...</option>';
         list.tickers.forEach(t => {
             const opt = document.createElement('option');
-            opt.value = t.symbol;
-            opt.textContent = t.symbol;
+            const displaySymbol = t.symbol || t.isin || '';
+            const fonte = t.symbol ? 'Y' : 'E';
+            opt.value = displaySymbol;
+            opt.textContent = t.name ? `${displaySymbol} - ${t.name} [${fonte}]` : `${displaySymbol} [${fonte}]`;
             select.appendChild(opt);
         });
-        if (currentVal && list.tickers.some(t => t.symbol === currentVal)) {
+        if (currentVal && list.tickers.some(t => (t.symbol || t.isin) === currentVal)) {
             select.value = currentVal;
         } else {
             // If the previously held ticker is not in the new list, clear stale slot state
             // so autoPopulateEmptySlots can refill this slot with a valid ticker.
-            if (chartSlots[slotIdx] && chartSlots[slotIdx].ticker && !list.tickers.some(t => t.symbol === chartSlots[slotIdx].ticker)) {
+            if (chartSlots[slotIdx] && chartSlots[slotIdx].ticker && !list.tickers.some(t => (t.symbol || t.isin) === chartSlots[slotIdx].ticker)) {
                 chartSlots[slotIdx].ticker = '';
                 chartSlots[slotIdx].tickerName = '';
                 if (chartSlots[slotIdx].priceSeries) {
@@ -1224,7 +1227,7 @@ async function loadListDetails(listId, forceFirstTicker = false) {
 
     // Auto-select the first ticker if none is active OR if forced (on list change in chart view)
     if ((forceFirstTicker || !activeTicker) && list.tickers.length > 0) {
-        activeTicker = list.tickers[0].symbol;
+        activeTicker = list.tickers[0].symbol || list.tickers[0].isin || '';
         activeTickerName = list.tickers[0].name;
         // Sync the active slot's select element to reflect the auto-selected ticker
         const slotSelect = document.querySelector(`.chart-slot-ticker[data-slot="${activeChartIndex}"]`);
@@ -1258,6 +1261,18 @@ async function loadListDetails(listId, forceFirstTicker = false) {
         runPopulate();
     }
 
+    // Build ticker ID map (symbol/isin -> id) and source set
+    window.tickerIdMap = {};
+    window.tickerHasYahoo = new Set();
+    list.tickers.forEach(t => {
+        if (t.symbol) {
+            tickerIdMap[t.symbol] = t.id;
+            tickerHasYahoo.add(t.symbol);
+            if (t.isin) tickerHasYahoo.add(t.isin);
+        }
+        if (t.isin) tickerIdMap[t.isin] = t.id;
+    });
+
     // Update Ticker List in Management
     const isSystem = isSystemList(list.name);
     const container = document.getElementById('current-list-tickers');
@@ -1265,8 +1280,13 @@ async function loadListDetails(listId, forceFirstTicker = false) {
     list.tickers.forEach(t => {
         const tag = document.createElement('div');
         tag.className = 'ticker-tag';
-        const displayName = t.name ? `${t.symbol} - ${t.name}` : t.symbol;
-        const removeBtn = isSystem ? '' : `<span style="cursor:pointer; margin-left:5px" onclick="removeTicker('${t.symbol}')">×</span>`;
+        const displaySymbol = t.symbol || t.isin || '?';
+        const fonte = t.symbol ? 'Yahoo' : (t.isin ? 'Euronext' : '?');
+        const isinInfo = t.isin ? ` [${t.isin}]` : '';
+        const micInfo = t.mic ? ` (${t.mic})` : '';
+        const displayName = t.name ? `${displaySymbol} - ${t.name}${isinInfo}${micInfo} [${fonte}]` : `${displaySymbol}${isinInfo}${micInfo} [${fonte}]`;
+        const idInfo = t.id ? `data-id="${t.id}"` : '';
+        const removeBtn = isSystem ? '' : `<span style="cursor:pointer; margin-left:5px" onclick="removeTickerById(${t.id})">×</span>`;
         tag.innerHTML = `${displayName} ${removeBtn}`;
         container.appendChild(tag);
     });
@@ -1307,8 +1327,9 @@ async function loadListDetails(listId, forceFirstTicker = false) {
         histSelect.innerHTML = '<option value="">Select ticker...</option>';
         list.tickers.forEach(t => {
             const option = document.createElement('option');
-            option.value = t.symbol;
-            option.textContent = t.symbol;
+            const displaySymbol = t.symbol || t.isin || '';
+            option.value = displaySymbol;
+            option.textContent = displaySymbol;
             histSelect.appendChild(option);
         });
     }
@@ -1317,6 +1338,12 @@ async function loadListDetails(listId, forceFirstTicker = false) {
 async function removeTicker(symbol) {
     if (!activeListId || activeListId === 'all') return;
     await apiCall(`/lists/${activeListId}/tickers/${symbol}`, 'DELETE');
+    loadLists();
+}
+
+async function removeTickerById(tickerId) {
+    if (!activeListId || activeListId === 'all') return;
+    await apiCall(`/lists/${activeListId}/tickers/by-id/${tickerId}`, 'DELETE');
     loadLists();
 }
 
@@ -1764,7 +1791,12 @@ async function handleNoData(symbol) {
     if (status) status.textContent = "Auto-downloading...";
     try {
         const years = document.getElementById('extend-years')?.value || 10;
-        await apiCall(`/tickers/${symbol}/update-data/?years=${years}`, 'POST');
+        const tickerId = window.tickerIdMap?.[symbol];
+        if (tickerId) {
+            await apiCall(`/tickers/by-id/${tickerId}/update-data/?years=${years}`, 'POST');
+        } else {
+            await apiCall(`/tickers/${symbol}/update-data/?years=${years}`, 'POST');
+        }
         updateChart(symbol);
     } catch (err) {
         console.error("Auto-update failed:", err);
@@ -4732,11 +4764,16 @@ document.getElementById('create-list-btn')?.addEventListener('click', async () =
 
 document.getElementById('add-ticker-btn')?.addEventListener('click', async () => {
     const symbol = document.getElementById('add-ticker-input').value.toUpperCase().trim();
+    const isin = document.getElementById('add-isin-input').value.trim();
+    const mic = document.getElementById('add-mic-select').value || 'ETLX';
     if (!activeListId) {
         alert("Please select or create a 'Ticker List' first (using the dropdown in the top header).");
         return;
     }
-    if (!symbol) return;
+    if (!symbol && !isin) {
+        alert("Inserire almeno symbol (Yahoo) o ISIN (Euronext).");
+        return;
+    }
 
     const btn = document.getElementById('add-ticker-btn');
     const originalText = btn.textContent;
@@ -4744,11 +4781,12 @@ document.getElementById('add-ticker-btn')?.addEventListener('click', async () =>
     btn.disabled = true;
 
     try {
-        await apiCall(`/lists/${activeListId}/tickers/`, 'POST', { symbol });
+        await apiCall(`/lists/${activeListId}/tickers/`, 'POST', { symbol: symbol || null, isin: isin || null, mic });
         document.getElementById('add-ticker-input').value = '';
+        document.getElementById('add-isin-input').value = '';
         loadLists();
     } catch (err) {
-        alert(err.message || `Impossibile aggiungere il ticker '${symbol}'. Verifica il simbolo.`);
+        alert(err.message || `Impossibile aggiungere il ticker. Verifica i dati.`);
     } finally {
         btn.textContent = originalText;
         btn.disabled = false;
@@ -4834,8 +4872,13 @@ document.getElementById('update-data-btn')?.addEventListener('click', async () =
         status.textContent = `Bulk Updating (0/${tickerOptions.length})...`;
         let count = 0;
         for (const symbol of tickerOptions) {
+            const tickerId = window.tickerIdMap?.[symbol];
             try {
-                await apiCall(`/tickers/${symbol}/update-data/?years=${years}`, 'POST');
+                if (tickerId) {
+                    await apiCall(`/tickers/by-id/${tickerId}/update-data/?years=${years}`, 'POST');
+                } else {
+                    await apiCall(`/tickers/${symbol}/update-data/?years=${years}`, 'POST');
+                }
                 count++;
                 status.textContent = `Bulk Updating (${count}/${tickerOptions.length})...`;
                 if (symbol === activeTicker) updateChart(symbol);
@@ -4852,8 +4895,14 @@ document.getElementById('update-data-btn')?.addEventListener('click', async () =
         }
         status.textContent = "Updating...";
         try {
-            const res = await apiCall(`/tickers/${activeTicker}/update-data/?years=${years}`, 'POST');
-            status.textContent = res.message || "Done";
+            const tickerId = window.tickerIdMap?.[activeTicker];
+            if (tickerId) {
+                const res = await apiCall(`/tickers/by-id/${tickerId}/update-data/?years=${years}`, 'POST');
+                status.textContent = res.message || "Done";
+            } else {
+                const res = await apiCall(`/tickers/${activeTicker}/update-data/?years=${years}`, 'POST');
+                status.textContent = res.message || "Done";
+            }
             updateChart(activeTicker);
             checkAndNotifyAlarms();
         } catch (err) {
@@ -7655,6 +7704,11 @@ function renderKeyStatisticsDashboard(data, container) {
 
 async function loadFundamentalData(symbol, forceUpdate = true) {
     if (!symbol) return;
+    if (window.tickerHasYahoo && !window.tickerHasYahoo.has(symbol)) {
+        const section = document.getElementById('ticker-fundamentals-section');
+        if (section) section.classList.add('hidden');
+        return;
+    }
     console.log("Loading fundamentals for:", symbol);
     try {
         const data = await apiCall(`/tickers/${symbol}/fundamentals`);
@@ -7803,6 +7857,11 @@ function formatLargeNumber(num) {
 async function updateFundamentalsManually(symbol) {
     const targetSymbol = symbol || activeTicker;
     const isBulk = document.getElementById('update-fundamentals-list-checkbox')?.checked;
+
+    if (!isBulk && window.tickerHasYahoo && !window.tickerHasYahoo.has(targetSymbol)) {
+        alert("Dati fondamentali non disponibili per strumenti senza ticker Yahoo.");
+        return;
+    }
 
     if (isBulk && !activeListId) {
         alert("Seleziona una lista prima di aggiornare tutti i titoli.");

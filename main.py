@@ -67,12 +67,17 @@ def init_system_sheets():
 
 def _is_eur_ticker(symbol: str) -> bool:
     """True se il ticker termina con uno dei suffissi EUR_SUFFIXES."""
+    if not symbol:
+        return False
     upper = symbol.upper().strip()
     return upper.endswith(EUR_SUFFIXES)
 
 
 def _sync_ticker_to_currency_lists(db, symbol: str, name: str = None):
-    """Assicura che un ticker sia presente nella lista USD o EUR (a seconda del suffisso)."""
+    """Assicura che un ticker sia presente nella lista USD o EUR (a seconda del suffisso).
+    Skip per ticker senza symbol (ISIN-only)."""
+    if not symbol:
+        return
     target_name = "EUR" if _is_eur_ticker(symbol) else "USD"
     target_list = db.query(db_mod.TickerList).filter(
         db_mod.TickerList.name == target_name
@@ -139,6 +144,8 @@ def _rebuild_currency_lists(db):
 
     seen = set()
     for t in all_tickers:
+        if not t.symbol:
+            continue
         target_name = "EUR" if _is_eur_ticker(t.symbol) else "USD"
         target_list = next((l for l in system_lists if l.name == target_name), None)
         if not target_list:
@@ -397,33 +404,50 @@ def add_ticker_to_list(list_id: int, ticker: schemas.TickerCreate, db: Session =
             detail=f"Impossibile aggiungere ticker manualmente alla lista di sistema '{db_list.name}'"
         )
 
-    symbol = ticker.symbol.upper().strip()
+    symbol = ticker.symbol.upper().strip() if ticker.symbol else ""
+    isin = ticker.isin.strip() if ticker.isin else ""
 
-    # Check if ticker already in list
-    existing = db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == list_id, db_mod.Ticker.symbol == symbol).first()
-    if existing:
-        # Sync to currency list in case it was missed
-        _sync_ticker_to_currency_lists(db, existing.symbol, existing.name)
-        db.commit()
-        return existing
+    if not symbol and not isin:
+        raise HTTPException(status_code=400, detail="Specificare symbol (Yahoo) o isin (Euronext)")
 
-    # Validate ticker via yfinance and fetch company name
-    try:
-        yf_ticker = yf.Ticker(symbol)
-        info = yf_ticker.info
-        # yfinance returns an empty dict or dict without quoteType for invalid symbols
-        if not info or not info.get("quoteType"):
-            raise HTTPException(status_code=404, detail=f"Ticker '{symbol}' non trovato. Verifica il simbolo e riprova.")
-        company_name = info.get("shortName") or info.get("longName") or ticker.name
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Errore nella validazione del ticker '{symbol}': {str(e)}")
+    # Check if ticker already in list (by symbol or by isin)
+    if symbol:
+        existing = db.query(db_mod.Ticker).filter(
+            db_mod.Ticker.list_id == list_id, db_mod.Ticker.symbol == symbol
+        ).first()
+        if existing:
+            _sync_ticker_to_currency_lists(db, existing.symbol, existing.name)
+            db.commit()
+            return existing
+    elif isin:
+        existing = db.query(db_mod.Ticker).filter(
+            db_mod.Ticker.list_id == list_id, db_mod.Ticker.isin == isin
+        ).first()
+        if existing:
+            db.commit()
+            return existing
 
-    db_ticker = db_mod.Ticker(symbol=symbol, name=company_name, list_id=list_id)
+    company_name = ticker.name
+    mic = ticker.mic or "ETLX"
+
+    if symbol:
+        # Validate ticker via yfinance and fetch company name
+        try:
+            yf_ticker = yf.Ticker(symbol)
+            info = yf_ticker.info
+            if not info or not info.get("quoteType"):
+                raise HTTPException(status_code=404, detail=f"Ticker '{symbol}' non trovato. Verifica il simbolo e riprova.")
+            company_name = info.get("shortName") or info.get("longName") or ticker.name
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Errore nella validazione del ticker '{symbol}': {str(e)}")
+
+    db_ticker = db_mod.Ticker(symbol=symbol if symbol else None, name=company_name,
+                               isin=isin if isin else None, mic=mic, list_id=list_id)
     db.add(db_ticker)
-    # Sync to currency list
-    _sync_ticker_to_currency_lists(db, symbol, company_name)
+    if symbol:
+        _sync_ticker_to_currency_lists(db, symbol, company_name)
     db.commit()
     db.refresh(db_ticker)
     return db_ticker
@@ -446,7 +470,27 @@ def remove_ticker_from_list(list_id: int, symbol: str, db: Session = Depends(get
     db.delete(db_ticker)
     db.commit()
     # Uns sync from currency lists if no other non-system list has this ticker
-    _unsync_ticker_from_currency_lists(db, symbol, list_id)
+    if symbol:
+        _unsync_ticker_from_currency_lists(db, symbol, list_id)
+    db.commit()
+    return {"message": "Ticker removed"}
+
+@app.delete("/lists/{list_id}/tickers/by-id/{ticker_id}")
+def remove_ticker_from_list_by_id(list_id: int, ticker_id: int, db: Session = Depends(get_db)):
+    db_list = db.query(db_mod.TickerList).filter(db_mod.TickerList.id == list_id).first()
+    if not db_list:
+        raise HTTPException(status_code=404, detail="List not found")
+    if db_list.name in SYSTEM_LIST_NAMES:
+        raise HTTPException(status_code=400, detail=f"Impossibile rimuovere ticker manualmente dalla lista di sistema '{db_list.name}'")
+
+    db_ticker = db.query(db_mod.Ticker).filter(db_mod.Ticker.id == ticker_id, db_mod.Ticker.list_id == list_id).first()
+    if not db_ticker:
+        raise HTTPException(status_code=404, detail="Ticker not found in list")
+    symbol = db_ticker.symbol
+    db.delete(db_ticker)
+    db.commit()
+    if symbol:
+        _unsync_ticker_from_currency_lists(db, symbol, list_id)
     db.commit()
     return {"message": "Ticker removed"}
 
@@ -482,7 +526,8 @@ def fetch_missing_ticker_names(list_id: int, db: Session = Depends(get_db)):
         
     tickers_missing_name = db.query(db_mod.Ticker).filter(
         db_mod.Ticker.list_id == list_id,
-        (db_mod.Ticker.name == None) | (db_mod.Ticker.name == "")
+        (db_mod.Ticker.name == None) | (db_mod.Ticker.name == ""),
+        db_mod.Ticker.symbol != None
     ).all()
     
     if not tickers_missing_name:
@@ -599,17 +644,24 @@ async def upload_csv(list_id: int, file: UploadFile = File(...), db: Session = D
         for entry in ticker_data:
             symbol = entry["symbol"]
             name = entry["name"]
-            existing = db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == list_id, db_mod.Ticker.symbol == symbol).first()
+            isin = entry.get("isin")
+            mic = entry.get("mic", "ETLX")
+            if symbol:
+                existing = db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == list_id, db_mod.Ticker.symbol == symbol).first()
+            elif isin:
+                existing = db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == list_id, db_mod.Ticker.isin == isin).first()
+            else:
+                continue
             if not existing:
-                db_ticker = db_mod.Ticker(symbol=symbol, name=name, list_id=list_id)
+                db_ticker = db_mod.Ticker(symbol=symbol, name=name, isin=isin, mic=mic, list_id=list_id)
                 db.add(db_ticker)
-                added.append(symbol)
+                added.append(symbol or isin)
             elif name and existing.name != name:
                 existing.name = name
 
         # Sync tutti i ticker aggiunti alle liste di sistema
         for entry in ticker_data:
-            if entry["symbol"] in added:
+            if entry.get("symbol") and entry["symbol"] in added:
                 _sync_ticker_to_currency_lists(db, entry["symbol"], entry["name"])
 
         db.commit()
@@ -622,6 +674,32 @@ async def upload_csv(list_id: int, file: UploadFile = File(...), db: Session = D
         traceback.print_exc()
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+
+@app.put("/tickers/{ticker_id}", response_model=schemas.Ticker)
+def update_ticker(ticker_id: int, ticker_data: schemas.TickerCreate, db: Session = Depends(get_db)):
+    db_ticker = db.query(db_mod.Ticker).filter(db_mod.Ticker.id == ticker_id).first()
+    if not db_ticker:
+        raise HTTPException(status_code=404, detail="Ticker non trovato")
+    if ticker_data.symbol is not None:
+        db_ticker.symbol = ticker_data.symbol.upper().strip() if ticker_data.symbol.strip() else None
+    if ticker_data.name is not None:
+        db_ticker.name = ticker_data.name
+    if ticker_data.isin is not None:
+        db_ticker.isin = ticker_data.isin.strip() if ticker_data.isin.strip() else None
+    if ticker_data.mic is not None:
+        db_ticker.mic = ticker_data.mic
+    db.commit()
+    db.refresh(db_ticker)
+    return db_ticker
+
+@app.post("/tickers/by-id/{ticker_id}/update-data/")
+def update_ticker_by_id(ticker_id: int, years: int = None,
+                        market_db: Session = Depends(get_market_db)):
+    period = f"{years}y" if years else "1y"
+    success = finance_logic.update_ticker_by_id(market_db, ticker_id, period=period)
+    if not success:
+        raise HTTPException(status_code=400, detail="Nessun dato scaricato")
+    return {"message": f"Dati aggiornati per ticker {ticker_id}"}
 
 @app.post("/tickers/{symbol}/update-data/")
 def update_ticker_data(symbol: str, years: int = None, db: Session = Depends(get_market_db)):
@@ -671,13 +749,13 @@ def run_modular_screening(request: schemas.ScreeningRequest, db: Session = Depen
     try:
         if request.symbols:
             ticker_objects = config_db.query(db_mod.Ticker).filter(db_mod.Ticker.symbol.in_(request.symbols)).all()
-            tickers = [t.symbol for t in ticker_objects]
+            tickers = [t.symbol if t.symbol else t.isin for t in ticker_objects]
         elif request.list_id == 0:
             ticker_objects = config_db.query(db_mod.Ticker).all()
-            tickers = [t.symbol for t in ticker_objects]
+            tickers = [t.symbol if t.symbol else t.isin for t in ticker_objects]
         else:
             ticker_objects = config_db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == request.list_id).all()
-            tickers = [t.symbol for t in ticker_objects]
+            tickers = [t.symbol if t.symbol else t.isin for t in ticker_objects]
     finally:
         config_db.close()
     
@@ -692,7 +770,12 @@ def run_modular_screening(request: schemas.ScreeningRequest, db: Session = Depen
             db_tickers = config_db.query(db_mod.Ticker).all()
         else:
             db_tickers = config_db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == request.list_id).all()
-        name_map = {t.symbol: t.name for t in db_tickers}
+        name_map = {}
+        for t in db_tickers:
+            if t.symbol:
+                name_map[t.symbol] = t.name
+            if t.isin:
+                name_map[t.isin] = t.name
         for r in results:
             r["name"] = name_map.get(r["symbol"])
     finally:
@@ -853,13 +936,13 @@ def run_dynamic_screening(request: schemas.DynamicScreeningRequest, db: Session 
     try:
         if request.symbols:
             ticker_objects = config_db.query(db_mod.Ticker).filter(db_mod.Ticker.symbol.in_(request.symbols)).all()
-            tickers = [t.symbol for t in ticker_objects]
+            tickers = [t.symbol if t.symbol else t.isin for t in ticker_objects]
         elif request.list_id == 0:
             ticker_objects = config_db.query(db_mod.Ticker).all()
-            tickers = [t.symbol for t in ticker_objects]
+            tickers = [t.symbol if t.symbol else t.isin for t in ticker_objects]
         else:
             ticker_objects = config_db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == request.list_id).all()
-            tickers = [t.symbol for t in ticker_objects]
+            tickers = [t.symbol if t.symbol else t.isin for t in ticker_objects]
     finally:
         config_db.close()
     
@@ -882,7 +965,12 @@ def run_dynamic_screening(request: schemas.DynamicScreeningRequest, db: Session 
             db_tickers = config_db.query(db_mod.Ticker).all()
         else:
             db_tickers = config_db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == request.list_id).all()
-        name_map = {t.symbol: t.name for t in db_tickers}
+        name_map = {}
+        for t in db_tickers:
+            if t.symbol:
+                name_map[t.symbol] = t.name
+            if t.isin:
+                name_map[t.isin] = t.name
         for r in results:
             r["name"] = name_map.get(r["symbol"])
     finally:
@@ -1124,7 +1212,7 @@ def get_list_fundamentals(list_id: int, db: Session = Depends(get_db)):
     else:
         db_tickers = db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == list_id).all()
     
-    symbols = list(set([t.symbol for t in db_tickers]))
+    symbols = list(set([t.symbol for t in db_tickers if t.symbol]))
     return db.query(db_mod.FundamentalData).filter(db_mod.FundamentalData.symbol.in_(symbols)).all()
 
 @app.post("/lists/{list_id}/fundamentals/update")
@@ -1137,10 +1225,12 @@ def update_list_fundamentals(list_id: int, db: Session = Depends(get_db)):
     if not db_tickers:
         raise HTTPException(status_code=404, detail="No tickers found")
     
-    # Deduplicate tickers by symbol
+    # Deduplicate tickers by symbol (skip ISIN-only)
     seen = set()
     unique_tickers = []
     for t in db_tickers:
+        if not t.symbol:
+            continue
         if t.symbol not in seen:
             seen.add(t.symbol)
             unique_tickers.append(t)

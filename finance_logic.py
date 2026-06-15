@@ -190,16 +190,41 @@ class FinanceLogic:
         
         return float(df['Close'].iloc[-1]), float(slope), status
 
+    def update_ticker_by_id(self, db: Session, ticker_id: int, period: str = "1y") -> bool:
+        from database import Ticker, SessionLocalConfig
+        config_db = SessionLocalConfig()
+        try:
+            ticker = config_db.query(Ticker).filter(Ticker.id == ticker_id).first()
+        finally:
+            config_db.close()
+        if not ticker:
+            raise ValueError(f"Ticker {ticker_id} non trovato")
+        if ticker.symbol and ticker.symbol.strip():
+            return self.download_and_save_data(db, ticker.symbol, period=period)
+        elif ticker.isin:
+            from euronext_downloader import download_euronext_csv
+            df = download_euronext_csv(ticker.isin, ticker.mic or "ETLX")
+            if df.empty:
+                print(f"Nessun dato Euronext per ISIN {ticker.isin}")
+                return False
+            return self._process_yf_df(db, ticker.isin, df)
+        else:
+            raise ValueError(f"Ticker {ticker_id}: né symbol né isin disponibili")
+
     def parse_csv_tickers(self, csv_content: str):
         """Parses a CSV string with semicolon separator to extract tickers.
-        Format: yahoo_ticker;name
+        Formati supportati:
+          - symbol;name
+          - symbol;name;isin
+          - symbol;name;isin;mic
+          - ;name;isin;mic
         """
         try:
             import csv
             f = io.StringIO(csv_content.strip())
             # Try to detect if there's a header
             first_line = csv_content.strip().split('\n')[0].lower()
-            has_header = "yahoo_ticker" in first_line or "ticker" in first_line
+            has_header = "yahoo_ticker" in first_line or "ticker" in first_line or "symbol" in first_line
             
             reader = csv.reader(f, delimiter=';')
             if has_header:
@@ -208,10 +233,18 @@ class FinanceLogic:
             tickers = []
             for row in reader:
                 if not row: continue
-                symbol = row[0].strip()
+                symbol = row[0].strip() if len(row) > 0 else ""
                 name = row[1].strip() if len(row) > 1 else None
-                if symbol:
-                    tickers.append({"symbol": symbol, "name": name})
+                isin = row[2].strip() if len(row) > 2 else None
+                mic = row[3].strip() if len(row) > 3 else None
+                if not symbol and not isin:
+                    continue
+                tickers.append({
+                    "symbol": symbol if symbol else None,
+                    "name": name,
+                    "isin": isin if isin else None,
+                    "mic": mic if mic else "ETLX",
+                })
             return tickers
         except Exception as e:
             print(f"Error parsing CSV: {e}")
@@ -1147,8 +1180,11 @@ class FinanceLogic:
         try:
             ticker = yf.Ticker(symbol)
             info = ticker.info
-            if not info:
+            if not info or not info.get("quoteType"):
                 return None
+        except Exception:
+            print(f"update_fundamental_data: yfinance fallito per {symbol}")
+            return None
 
             # Check if record already exists
             db_fund = db.query(FundamentalData).filter(FundamentalData.symbol == symbol).first()

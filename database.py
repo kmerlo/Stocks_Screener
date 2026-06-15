@@ -46,12 +46,15 @@ class Ticker(ConfigBase):
     __tablename__ = "tickers"
 
     id = Column(Integer, primary_key=True, index=True)
-    symbol = Column(String, index=True)
+    symbol = Column(String, index=True, nullable=True)
     name = Column(String, nullable=True)
+    isin = Column(String, nullable=True, index=True)
+    mic = Column(String, nullable=True, default="ETLX")
     list_id = Column(Integer, ForeignKey("ticker_lists.id"))
     list_ref = relationship("TickerList", back_populates="tickers")
 
-    __table_args__ = (UniqueConstraint('symbol', 'list_id', name='_symbol_list_uc'),)
+    __table_args__ = (UniqueConstraint('symbol', 'list_id', name='_symbol_list_uc'),
+                      UniqueConstraint('isin', 'list_id', name='_isin_list_uc'),)
 
 class ChartTemplate(ConfigBase):
     __tablename__ = "chart_templates"
@@ -417,6 +420,20 @@ def _migrate_config():
                 conn.commit()
             except Exception:
                 pass
+            # Migration: add isin column to tickers
+            try:
+                conn.execute(text("ALTER TABLE tickers ADD COLUMN isin VARCHAR"))
+                conn.commit()
+            except Exception:
+                pass
+            # Migration: add mic column to tickers
+            try:
+                conn.execute(text("ALTER TABLE tickers ADD COLUMN mic VARCHAR DEFAULT 'ETLX'"))
+                conn.commit()
+            except Exception:
+                pass
+            # Migration: make symbol nullable — SQLite doesn't support ALTER COLUMN,
+            # but new Ticker entries will have symbol=NULL allowed by the model.
     except Exception as e:
         print(f"Warning: Config migration failed: {e}")
 

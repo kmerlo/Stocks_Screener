@@ -413,8 +413,16 @@
                     <input type="text" id="new-list-name" placeholder="List Name" style="flex: 1;">
                     <button id="create-list-btn">Create List</button>
                     <span class="edit-controls" style="color: var(--text-color); font-weight: bold; margin-left: 20px;">Edit Selected List</span>
-                    <div class="edit-controls" style="display: flex; gap: 10px; flex: 1;">
-                        <input type="text" id="add-ticker-input" placeholder="e.g. AAPL" style="flex: 1;">
+                    <div class="edit-controls" style="display: flex; gap: 10px; flex: 3;">
+                        <input type="text" id="add-ticker-input" placeholder="Yahoo symbol (e.g. AAPL)" style="flex: 1;">
+                        <input type="text" id="add-isin-input" placeholder="ISIN (opzionale se symbol presente)" style="flex: 1;">
+                        <select id="add-mic-select" style="flex: 0.5;">
+                            <option value="">MIC...</option>
+                            <option value="ETLX">ETLX (EuroTLX)</option>
+                            <option value="SEDX">SEDX (Sedex)</option>
+                            <option value="XPAR">XPAR (Euronext Paris)</option>
+                            <option value="XLON">XLON (London)</option>
+                        </select>
                         <button id="add-ticker-btn">Add Ticker</button>
                     </div>
                     <div class="edit-controls" style="display: flex; gap: 5px;">
@@ -432,8 +440,10 @@
                                 <span class="tooltip-text tooltip-text-bottom">
                                     <strong>Formato richiesto:</strong><br>
                                     - Separatore: <code>;</code><br>
-                                    - Colonna 1: Ticker Yahoo<br>
-                                    - Colonna 2: Nome (Opzionale)
+                                    - Colonna 1: Ticker Yahoo (vuoto se solo ISIN)<br>
+                                    - Colonna 2: Nome (Opzionale)<br>
+                                    - Colonna 3: ISIN (Opzionale)<br>
+                                    - Colonna 4: MIC (Opzionale, default ETLX)
                                 </span>
                             </span>
                         </button>
