@@ -190,6 +190,15 @@ class FinanceLogic:
         
         return float(df['Close'].iloc[-1]), float(slope), status
 
+    def _parse_years(self, period: str) -> int:
+        years = 1
+        if period and period.endswith('y'):
+            try:
+                years = int(period[:-1])
+            except ValueError:
+                pass
+        return max(years, 1)
+
     def update_ticker_by_id(self, db: Session, ticker_id: int, period: str = "1y") -> bool:
         from database import Ticker, SessionLocalConfig
         config_db = SessionLocalConfig()
@@ -203,9 +212,42 @@ class FinanceLogic:
             return self.download_and_save_data(db, ticker.symbol, period=period)
         elif ticker.isin:
             from euronext_downloader import download_euronext_csv
-            df = download_euronext_csv(ticker.isin, ticker.mic or "ETLX")
+            years = self._parse_years(period)
+            df = download_euronext_csv(ticker.isin, ticker.mic or "ETLX", years=years)
             if df.empty:
                 print(f"Nessun dato Euronext per ISIN {ticker.isin}")
+                return False
+            return self._process_yf_df(db, ticker.isin, df)
+        else:
+            raise ValueError(f"Ticker {ticker_id}: né symbol né isin disponibili")
+
+    def extend_history_by_id(self, db: Session, ticker_id: int, years: int = 1) -> bool:
+        from database import Ticker, SessionLocalConfig
+        config_db = SessionLocalConfig()
+        try:
+            ticker = config_db.query(Ticker).filter(Ticker.id == ticker_id).first()
+        finally:
+            config_db.close()
+        if not ticker:
+            raise ValueError(f"Ticker {ticker_id} non trovato")
+        if ticker.symbol and ticker.symbol.strip():
+            return self.extend_history(db, ticker.symbol, years)
+        elif ticker.isin:
+            from euronext_downloader import download_euronext_csv
+            oldest = db.query(DBPriceData).filter(
+                DBPriceData.symbol == ticker.isin
+            ).order_by(DBPriceData.date.asc()).first()
+            if not oldest:
+                return self.update_ticker_by_id(db, ticker_id, period=f"{years}y")
+            end_date = oldest.date
+            start_date = end_date - timedelta(days=365 * years)
+            df = download_euronext_csv(
+                ticker.isin, ticker.mic or "ETLX",
+                startdate=start_date.strftime("%Y-%m-%d"),
+                enddate=end_date.strftime("%Y-%m-%d"),
+            )
+            if df.empty:
+                print(f"Nessun dato Euronext più vecchio per ISIN {ticker.isin}")
                 return False
             return self._process_yf_df(db, ticker.isin, df)
         else:

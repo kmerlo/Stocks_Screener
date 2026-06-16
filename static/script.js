@@ -11,6 +11,7 @@ let activeView = 'monitoring';
 let activeListId = null;
 let activeTicker = null;
 let activeTickerName = null;
+let activeTickerAlias = null;
 let lastChartedSymbol = null;
 let mainChart = null;
 let priceSeries = null;
@@ -91,13 +92,17 @@ function activateChartSlot(index) {
 
     const titleMain = document.getElementById('chart-title-main');
     if (titleMain) {
+        const aliasPart = slot.tickerAlias ? ` «${slot.tickerAlias}»` : '';
         titleMain.textContent = slot.tickerName
-            ? `${slot.ticker} - ${slot.tickerName}`
-            : (slot.ticker || 'Select a ticker');
+            ? `${slot.ticker} - ${slot.tickerName}${aliasPart}`
+            : ((slot.ticker || 'Select a ticker') + aliasPart);
     }
 
     const nameSpan = document.querySelector(`.chart-slot-name[data-slot="${index}"]`);
-    if (nameSpan) nameSpan.textContent = slot.tickerName || '';
+    if (nameSpan) {
+        const aliasPart = slot.tickerAlias ? ` «${slot.tickerAlias}»` : '';
+        nameSpan.textContent = (slot.tickerName || slot.ticker || '') + aliasPart;
+    }
 
     updateVariation();
     renderActiveIndicatorsUI();
@@ -124,6 +129,7 @@ function saveActiveSlotState() {
     slot.legend = mainLegend;
     slot.ticker = activeTicker;
     slot.tickerName = activeTickerName;
+    slot.tickerAlias = activeTickerAlias;
     slot.activeIndicators = activeIndicators;
     slot.secondaryCharts = secondaryCharts;
     slot.seriesDataMap = seriesDataMap;
@@ -145,6 +151,7 @@ function restoreSlotState(index) {
     mainLegend = slot.legend;
     activeTicker = slot.ticker;
     activeTickerName = slot.tickerName;
+    activeTickerAlias = slot.tickerAlias;
     activeIndicators = slot.activeIndicators;
     secondaryCharts = slot.secondaryCharts;
     seriesDataMap = slot.seriesDataMap;
@@ -221,10 +228,14 @@ async function autoPopulateEmptySlots() {
         activateChartSlot(i);
         activeTicker = symbol;
         activeTickerName = null;
+        activeTickerAlias = null;
         await updateChart(symbol);
 
         const nameSpan = document.querySelector(`.chart-slot-name[data-slot="${i}"]`);
-        if (nameSpan) nameSpan.textContent = activeTickerName || '';
+        if (nameSpan) {
+            const aliasPart = activeTickerAlias ? ` «${activeTickerAlias}»` : '';
+            nameSpan.textContent = (activeTickerName || symbol) + aliasPart;
+        }
         saveActiveSlotState();
     }
 
@@ -875,15 +886,20 @@ function initChart() {
             activateChartSlot(slotIndex);
             activeTicker = symbol;
             activeTickerName = null;
+            activeTickerAlias = null;
             // Persist the ticker onto the targeted slot BEFORE updateChart, so the slot
             // is never observed as empty by anyone reading chartSlots[slotIndex].ticker.
             if (chartSlots[slotIndex]) {
                 chartSlots[slotIndex].ticker = symbol;
                 chartSlots[slotIndex].tickerName = null;
+                chartSlots[slotIndex].tickerAlias = null;
             }
             await updateChart(symbol);
             const nameSpan = document.querySelector(`.chart-slot-name[data-slot="${slotIndex}"]`);
-            if (nameSpan) nameSpan.textContent = activeTickerName || '';
+            if (nameSpan) {
+                const aliasPart = activeTickerAlias ? ` «${activeTickerAlias}»` : '';
+                nameSpan.textContent = (activeTickerName || symbol) + aliasPart;
+            }
             saveActiveSlotState();
         });
     });
@@ -916,7 +932,10 @@ function initChart() {
             const slotSelect = document.querySelector(`.chart-slot-ticker[data-slot="${activeChartIndex}"]`);
             if (slotSelect) slotSelect.value = activeTicker;
             const nameSpan = document.querySelector(`.chart-slot-name[data-slot="${activeChartIndex}"]`);
-            if (nameSpan) nameSpan.textContent = activeTickerName || '';
+            if (nameSpan) {
+                const aliasPart = activeTickerAlias ? ` «${activeTickerAlias}»` : '';
+                nameSpan.textContent = (activeTickerName || activeTicker || '') + aliasPart;
+            }
             updateChart(activeTicker).then(() => {
                 setTimeout(autoPopulateEmptySlots, 100);
             });
@@ -1229,11 +1248,15 @@ async function loadListDetails(listId, forceFirstTicker = false) {
     if ((forceFirstTicker || !activeTicker) && list.tickers.length > 0) {
         activeTicker = list.tickers[0].symbol || list.tickers[0].isin || '';
         activeTickerName = list.tickers[0].name;
+        activeTickerAlias = list.tickers[0].alias;
         // Sync the active slot's select element to reflect the auto-selected ticker
         const slotSelect = document.querySelector(`.chart-slot-ticker[data-slot="${activeChartIndex}"]`);
         if (slotSelect) slotSelect.value = activeTicker;
         const nameSpan = document.querySelector(`.chart-slot-name[data-slot="${activeChartIndex}"]`);
-        if (nameSpan) nameSpan.textContent = activeTickerName || '';
+        if (nameSpan) {
+            const aliasPart = activeTickerAlias ? ` «${activeTickerAlias}»` : '';
+            nameSpan.textContent = (activeTickerName || activeTicker || '') + aliasPart;
+        }
         // Defer until charts are initialized (initChart runs after loadLists in the boot flow)
         const runUpdate = () => {
             if (!mainChart || chartSlots.length === 0) {
@@ -1280,14 +1303,17 @@ async function loadListDetails(listId, forceFirstTicker = false) {
     list.tickers.forEach(t => {
         const tag = document.createElement('div');
         tag.className = 'ticker-tag';
+        tag.setAttribute('data-ticker-id', t.id);
         const displaySymbol = t.symbol || t.isin || '?';
         const fonte = t.symbol ? 'Yahoo' : (t.isin ? 'Euronext' : '?');
         const isinInfo = t.isin ? ` [${t.isin}]` : '';
         const micInfo = t.mic ? ` (${t.mic})` : '';
-        const displayName = t.name ? `${displaySymbol} - ${t.name}${isinInfo}${micInfo} [${fonte}]` : `${displaySymbol}${isinInfo}${micInfo} [${fonte}]`;
-        const idInfo = t.id ? `data-id="${t.id}"` : '';
+        const aliasInfo = t.alias ? ` «${t.alias}»` : '';
+        const noteInfo = t.note ? ` [${t.note}]` : '';
+        const baseName = t.name ? `${displaySymbol} - ${t.name}${aliasInfo}${noteInfo}${isinInfo}${micInfo} [${fonte}]` : `${displaySymbol}${aliasInfo}${noteInfo}${isinInfo}${micInfo} [${fonte}]`;
+        const editAliasBtn = isSystem ? '' : `<span class="alias-edit-btn" style="cursor:pointer; margin-left:4px; font-size:12px;" onclick="editAlias(${t.id})" title="Modifica alias e nota">✎</span>`;
         const removeBtn = isSystem ? '' : `<span style="cursor:pointer; margin-left:5px" onclick="removeTickerById(${t.id})">×</span>`;
-        tag.innerHTML = `${displayName} ${removeBtn}`;
+        tag.innerHTML = `${baseName} ${editAliasBtn} ${removeBtn}`;
         container.appendChild(tag);
     });
 
@@ -1345,6 +1371,62 @@ async function removeTickerById(tickerId) {
     if (!activeListId || activeListId === 'all') return;
     await apiCall(`/lists/${activeListId}/tickers/by-id/${tickerId}`, 'DELETE');
     loadLists();
+}
+
+async function editAlias(tickerId) {
+    const container = document.getElementById('current-list-tickers');
+    const tickerTag = container?.querySelector(`[data-ticker-id="${tickerId}"]`);
+    const overlay = document.createElement('div');
+    overlay.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,0.4);z-index:9999;display:flex;align-items:center;justify-content:center;';
+    overlay.innerHTML = `
+        <div style="background:var(--card-bg,#fff);padding:24px;border-radius:8px;min-width:360px;box-shadow:0 4px 20px rgba(0,0,0,0.3);">
+            <h3 style="margin:0 0 16px 0;">Modifica ticker</h3>
+            <div style="margin-bottom:12px;">
+                <label style="display:block;margin-bottom:4px;font-weight:bold;">Alias</label>
+                <input id="edit-alias-input" type="text" style="width:100%;padding:8px;border:1px solid var(--border-color,#ccc);border-radius:4px;background:var(--input-bg,#fff);color:var(--text-color,#000);" placeholder="Alias (opzionale)">
+            </div>
+            <div style="margin-bottom:20px;">
+                <label style="display:block;margin-bottom:4px;font-weight:bold;">Nota</label>
+                <input id="edit-note-input" type="text" style="width:100%;padding:8px;border:1px solid var(--border-color,#ccc);border-radius:4px;background:var(--input-bg,#fff);color:var(--text-color,#000);" placeholder="Nota (opzionale)">
+            </div>
+            <div style="display:flex;gap:8px;justify-content:flex-end;">
+                <button id="edit-cancel-btn" style="padding:8px 16px;border:1px solid var(--border-color,#ccc);border-radius:4px;background:transparent;cursor:pointer;">Annulla</button>
+                <button id="edit-save-btn" style="padding:8px 16px;border:none;border-radius:4px;background:var(--accent-color,#4CAF50);color:#fff;cursor:pointer;">Salva</button>
+            </div>
+        </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const aliasInput = overlay.querySelector('#edit-alias-input');
+    const noteInput = overlay.querySelector('#edit-note-input');
+
+    try {
+        const lists = await apiCall('/lists/', 'GET');
+        for (const list of lists) {
+            for (const t of list.tickers || []) {
+                if (t.id === tickerId) {
+                    aliasInput.value = t.alias || '';
+                    noteInput.value = t.note || '';
+                    break;
+                }
+            }
+        }
+    } catch (_) {}
+
+    overlay.querySelector('#edit-cancel-btn').onclick = () => overlay.remove();
+    overlay.querySelector('#edit-save-btn').onclick = async () => {
+        const alias = aliasInput.value.trim();
+        const note = noteInput.value.trim();
+        try {
+            await apiCall(`/tickers/by-id/${tickerId}/alias`, 'PATCH', { alias, note });
+            overlay.remove();
+            loadLists();
+        } catch (err) {
+            alert("Errore aggiornamento: " + err.message);
+        }
+    };
+    overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+    aliasInput.focus();
 }
 
 function resampleData(dailyData, timeframe) {
@@ -1443,8 +1525,13 @@ async function updateChart(symbol) {
         if (status) status.textContent = `⟳ Aggiorno ${symbol}...`;
         console.log(`[updateChart] Ticker change detected ${lastChartedSymbol} -> ${symbol}, downloading latest data...`);
         try {
-            const res = await apiCall(`/tickers/${encodeURIComponent(symbol)}/update-data/?years=1`, 'POST');
-            console.log(`[updateChart] Download OK:`, res);
+            const tickerId = window.tickerIdMap?.[symbol];
+            if (tickerId) {
+                await apiCall(`/tickers/by-id/${tickerId}/update-data/?years=1`, 'POST');
+            } else {
+                await apiCall(`/tickers/${encodeURIComponent(symbol)}/update-data/?years=1`, 'POST');
+            }
+            console.log(`[updateChart] Download OK`);
         } catch (err) {
             console.warn(`[updateChart] Auto-update on ticker change failed for ${symbol}:`, err);
         }
@@ -1454,13 +1541,14 @@ async function updateChart(symbol) {
     // Load drawings for this ticker
     await loadDrawings(symbol);
 
-    // Find name from currently loaded lists if possible
+    // Find name and alias from currently loaded lists if possible
     if (!activeTickerName) {
         const lists = await apiCall('/lists/');
         for (const l of lists) {
-            const t = l.tickers.find(tk => tk.symbol === symbol);
+            const t = l.tickers.find(tk => (tk.symbol || tk.isin) === symbol);
             if (t) {
                 activeTickerName = t.name;
+                activeTickerAlias = t.alias;
                 break;
             }
         }
@@ -1468,7 +1556,8 @@ async function updateChart(symbol) {
 
     const titleMain = document.getElementById('chart-title-main');
     if (titleMain) {
-        titleMain.textContent = activeTickerName ? `${symbol} - ${activeTickerName}` : symbol;
+        const aliasPart = activeTickerAlias ? ` «${activeTickerAlias}»` : '';
+        titleMain.textContent = activeTickerName ? `${symbol} - ${activeTickerName}${aliasPart}` : symbol + aliasPart;
     }
 
     console.log(`Updating chart for: ${symbol}`);
@@ -1800,6 +1889,9 @@ async function handleNoData(symbol) {
         updateChart(symbol);
     } catch (err) {
         console.error("Auto-update failed:", err);
+        if (mainChart && priceSeries) {
+            priceSeries.setData([]);
+        }
     }
 }
 
@@ -4763,9 +4855,20 @@ document.getElementById('create-list-btn')?.addEventListener('click', async () =
 });
 
 document.getElementById('add-ticker-btn')?.addEventListener('click', async () => {
-    const symbol = document.getElementById('add-ticker-input').value.toUpperCase().trim();
-    const isin = document.getElementById('add-isin-input').value.trim();
-    const mic = document.getElementById('add-mic-select').value || 'ETLX';
+    const symbolInput = document.getElementById('add-ticker-input');
+    const isinInput = document.getElementById('add-isin-input');
+    const aliasInput = document.getElementById('add-alias-input');
+    const noteInput = document.getElementById('add-note-input');
+    const micSelect = document.getElementById('add-mic-select');
+    if (!symbolInput || !isinInput || !micSelect) {
+        alert("Errore: campi del form non trovati. Ricarica la pagina (Ctrl+Shift+R).");
+        return;
+    }
+    const symbol = symbolInput.value.toUpperCase().trim();
+    const isin = isinInput.value.trim();
+    const alias = aliasInput ? aliasInput.value.trim() : '';
+    const note = noteInput ? noteInput.value.trim() : '';
+    const mic = micSelect.value || 'ETLX';
     if (!activeListId) {
         alert("Please select or create a 'Ticker List' first (using the dropdown in the top header).");
         return;
@@ -4781,9 +4884,11 @@ document.getElementById('add-ticker-btn')?.addEventListener('click', async () =>
     btn.disabled = true;
 
     try {
-        await apiCall(`/lists/${activeListId}/tickers/`, 'POST', { symbol: symbol || null, isin: isin || null, mic });
-        document.getElementById('add-ticker-input').value = '';
-        document.getElementById('add-isin-input').value = '';
+        await apiCall(`/lists/${activeListId}/tickers/`, 'POST', { symbol: symbol || null, isin: isin || null, mic, alias: alias || null, note: note || null });
+        symbolInput.value = '';
+        isinInput.value = '';
+        if (aliasInput) aliasInput.value = '';
+        if (noteInput) noteInput.value = '';
         loadLists();
     } catch (err) {
         alert(err.message || `Impossibile aggiungere il ticker. Verifica i dati.`);
@@ -4935,7 +5040,12 @@ document.getElementById('extend-history-btn').addEventListener('click', async ()
         let count = 0;
         for (const symbol of tickerOptions) {
             try {
-                await apiCall(`/tickers/${symbol}/extend-history/${years}`, 'POST');
+                const tid = window.tickerIdMap?.[symbol];
+                if (tid) {
+                    await apiCall(`/tickers/by-id/${tid}/extend-history/${years}`, 'POST');
+                } else {
+                    await apiCall(`/tickers/${symbol}/extend-history/${years}`, 'POST');
+                }
                 count++;
                 status.textContent = `Bulk Extending (${count}/${tickerOptions.length})...`;
                 if (symbol === activeTicker) updateChart(symbol);
@@ -4951,7 +5061,13 @@ document.getElementById('extend-history-btn').addEventListener('click', async ()
         }
         status.textContent = `Extending (${years}y)...`;
         try {
-            const res = await apiCall(`/tickers/${activeTicker}/extend-history/${years}`, 'POST');
+            const tid = window.tickerIdMap?.[activeTicker];
+            let res;
+            if (tid) {
+                res = await apiCall(`/tickers/by-id/${tid}/extend-history/${years}`, 'POST');
+            } else {
+                res = await apiCall(`/tickers/${activeTicker}/extend-history/${years}`, 'POST');
+            }
             status.textContent = res.message || "History extended!";
             updateChart(activeTicker);
         } catch (err) {
@@ -7734,7 +7850,8 @@ async function loadFundamentalData(symbol, forceUpdate = true) {
                 if (autoReopen && isCollapsed) localStorage.setItem('fundamentals_side_collapsed', 'false');
             }
             
-            document.getElementById('fundamental-ticker-symbol').textContent = symbol;
+            const aliasPart = activeTickerAlias ? ` «${activeTickerAlias}»` : '';
+            document.getElementById('fundamental-ticker-symbol').textContent = symbol + aliasPart;
             document.getElementById('fundamentals-container').innerHTML = '<p style="padding: 20px; color: var(--text-secondary);">Recupero dati fondamentali in corso...</p>';
             updateFundamentalsManually(symbol);
             return;
@@ -7764,11 +7881,12 @@ async function loadFundamentalData(symbol, forceUpdate = true) {
             if (icon) icon.textContent = '▲';
             if (autoReopen && isCollapsed) localStorage.setItem('fundamentals_side_collapsed', 'false');
         }
-        document.getElementById('fundamental-ticker-fullname').textContent = activeTickerName || symbol;
+        const aliasPart = activeTickerAlias ? ` «${activeTickerAlias}»` : '';
+        document.getElementById('fundamental-ticker-fullname').textContent = (activeTickerName || symbol) + aliasPart;
         document.getElementById('fundamental-ticker-symbol').textContent = symbol;
         const qDateEl = document.getElementById('fundamental-quarter-date');
         if (qDateEl) qDateEl.textContent = "(Trimestre: Oggi)";
-
+        
         const lastUpdatedEl = document.getElementById('fundamental-last-updated');
         if (lastUpdatedEl && lastUpdated) {
             const day = String(lastUpdated.getDate()).padStart(2, '0');
@@ -7812,7 +7930,8 @@ async function loadHistoricalFundamentals(symbol, date) {
         const data = await apiCall(`/tickers/${symbol}/fundamentals/historical?date=${date}`);
         console.log("Historical fundamentals data received:", data);
 
-        document.getElementById('fundamental-ticker-fullname').textContent = activeTickerName || symbol;
+        const aliasPart = activeTickerAlias ? ` «${activeTickerAlias}»` : '';
+        document.getElementById('fundamental-ticker-fullname').textContent = (activeTickerName || symbol) + aliasPart;
         document.getElementById('fundamental-ticker-symbol').textContent = symbol;
 
         // Set quarter date element
@@ -8676,6 +8795,7 @@ async function populateChartSlotsFromPortfolio(portfolioId) {
         if (tickers.length > 0 && (!activeTicker || !tickers.includes(activeTicker))) {
             activeTicker = tickers[0];
             activeTickerName = null;
+            activeTickerAlias = null;
             const slotSelect = document.querySelector(`.chart-slot-ticker[data-slot="${activeChartIndex}"]`);
             if (slotSelect) slotSelect.value = activeTicker;
             const nameSpan = document.querySelector(`.chart-slot-name[data-slot="${activeChartIndex}"]`);

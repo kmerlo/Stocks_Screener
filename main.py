@@ -13,6 +13,7 @@ import logging
 import traceback
 import io
 import csv
+import re
 from datetime import datetime
 
 # Setup logging
@@ -407,6 +408,14 @@ def add_ticker_to_list(list_id: int, ticker: schemas.TickerCreate, db: Session =
     symbol = ticker.symbol.upper().strip() if ticker.symbol else ""
     isin = ticker.isin.strip() if ticker.isin else ""
 
+    # Auto-detect: if symbol looks like an ISIN (12 alphanumeric chars), treat as ISIN
+    if symbol and re.match(r'^[A-Z]{2}[A-Z0-9]{9}[0-9]$', symbol):
+        if not isin:
+            isin = symbol
+            symbol = ""
+        elif symbol == isin:
+            symbol = ""
+
     if not symbol and not isin:
         raise HTTPException(status_code=400, detail="Specificare symbol (Yahoo) o isin (Euronext)")
 
@@ -444,13 +453,26 @@ def add_ticker_to_list(list_id: int, ticker: schemas.TickerCreate, db: Session =
             raise HTTPException(status_code=400, detail=f"Errore nella validazione del ticker '{symbol}': {str(e)}")
 
     db_ticker = db_mod.Ticker(symbol=symbol if symbol else None, name=company_name,
-                               isin=isin if isin else None, mic=mic, list_id=list_id)
+                               isin=isin if isin else None, mic=mic, alias=ticker.alias,
+                               note=ticker.note, list_id=list_id)
     db.add(db_ticker)
     if symbol:
         _sync_ticker_to_currency_lists(db, symbol, company_name)
     db.commit()
     db.refresh(db_ticker)
     return db_ticker
+
+@app.patch("/tickers/by-id/{ticker_id}/alias", response_model=schemas.Ticker)
+def update_ticker_alias(ticker_id: int, data: schemas.AliasUpdate,
+                        db: Session = Depends(get_db)):
+    ticker = db.query(db_mod.Ticker).filter(db_mod.Ticker.id == ticker_id).first()
+    if not ticker:
+        raise HTTPException(status_code=404, detail="Ticker not found")
+    ticker.alias = data.alias if data.alias else None
+    ticker.note = data.note if data.note else None
+    db.commit()
+    db.refresh(ticker)
+    return ticker
 
 @app.delete("/lists/{list_id}/tickers/{symbol}")
 def remove_ticker_from_list(list_id: int, symbol: str, db: Session = Depends(get_db)):
@@ -688,6 +710,10 @@ def update_ticker(ticker_id: int, ticker_data: schemas.TickerCreate, db: Session
         db_ticker.isin = ticker_data.isin.strip() if ticker_data.isin.strip() else None
     if ticker_data.mic is not None:
         db_ticker.mic = ticker_data.mic
+    if ticker_data.alias is not None:
+        db_ticker.alias = ticker_data.alias
+    if ticker_data.note is not None:
+        db_ticker.note = ticker_data.note
     db.commit()
     db.refresh(db_ticker)
     return db_ticker
@@ -700,6 +726,14 @@ def update_ticker_by_id(ticker_id: int, years: int = None,
     if not success:
         raise HTTPException(status_code=400, detail="Nessun dato scaricato")
     return {"message": f"Dati aggiornati per ticker {ticker_id}"}
+
+@app.post("/tickers/by-id/{ticker_id}/extend-history/{years}")
+def extend_ticker_by_id(ticker_id: int, years: int,
+                        market_db: Session = Depends(get_market_db)):
+    success = finance_logic.extend_history_by_id(market_db, ticker_id, years)
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to extend history")
+    return {"message": f"History extended by {years} years for ticker {ticker_id}"}
 
 @app.post("/tickers/{symbol}/update-data/")
 def update_ticker_data(symbol: str, years: int = None, db: Session = Depends(get_market_db)):

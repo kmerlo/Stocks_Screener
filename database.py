@@ -50,6 +50,8 @@ class Ticker(ConfigBase):
     name = Column(String, nullable=True)
     isin = Column(String, nullable=True, index=True)
     mic = Column(String, nullable=True, default="ETLX")
+    alias = Column(String, nullable=True)
+    note = Column(Text, default="")
     list_id = Column(Integer, ForeignKey("ticker_lists.id"))
     list_ref = relationship("TickerList", back_populates="tickers")
 
@@ -429,6 +431,12 @@ def _migrate_config():
             # Migration: add mic column to tickers
             try:
                 conn.execute(text("ALTER TABLE tickers ADD COLUMN mic VARCHAR DEFAULT 'ETLX'"))
+                conn.commit()
+            except Exception:
+                pass
+            # Migration: add note column to tickers
+            try:
+                conn.execute(text("ALTER TABLE tickers ADD COLUMN note TEXT DEFAULT ''"))
                 conn.commit()
             except Exception:
                 pass

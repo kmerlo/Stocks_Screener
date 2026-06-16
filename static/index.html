@@ -416,12 +416,16 @@
                     <div class="edit-controls" style="display: flex; gap: 10px; flex: 3;">
                         <input type="text" id="add-ticker-input" placeholder="Yahoo symbol (e.g. AAPL)" style="flex: 1;">
                         <input type="text" id="add-isin-input" placeholder="ISIN (opzionale se symbol presente)" style="flex: 1;">
-                        <select id="add-mic-select" style="flex: 0.5;">
+                        <input type="text" id="add-alias-input" placeholder="Alias (opzionale)" style="flex: 0.5;">
+                        <input type="text" id="add-note-input" placeholder="Nota (opzionale)" style="flex: 0.5;">
+                        <select id="add-mic-select" style="width: 110px;">
                             <option value="">MIC...</option>
                             <option value="ETLX">ETLX (EuroTLX)</option>
                             <option value="SEDX">SEDX (Sedex)</option>
                             <option value="XPAR">XPAR (Euronext Paris)</option>
                             <option value="XLON">XLON (London)</option>
+                            <option value="XCER">CertX</option>
+                            <option value="XALT">Altro</option>
                         </select>
                         <button id="add-ticker-btn">Add Ticker</button>
                     </div>

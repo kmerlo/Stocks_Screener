@@ -8,6 +8,13 @@ class TickerBase(BaseModel):
     name: Optional[str] = None
     isin: Optional[str] = None
     mic: Optional[str] = "ETLX"
+    alias: Optional[str] = None
+    note: Optional[str] = None
+
+
+class AliasUpdate(BaseModel):
+    alias: Optional[str] = None
+    note: Optional[str] = None
 
 class TickerCreate(TickerBase):
     pass
