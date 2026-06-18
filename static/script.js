@@ -1516,11 +1516,11 @@ document.getElementById('compare-list-select').addEventListener('change', async 
     if (activeTicker) updateChart(activeTicker);
 });
 
-async function updateChart(symbol) {
+async function updateChart(symbol, skipAutoDownload = false) {
     if (!symbol) return;
     if (!mainChart || chartSlots.length === 0) return;
 
-    if (symbol !== lastChartedSymbol) {
+    if (symbol !== lastChartedSymbol && !skipAutoDownload) {
         const status = document.getElementById('update-status');
         if (status) status.textContent = `⟳ Aggiorno ${symbol}...`;
         console.log(`[updateChart] Ticker change detected ${lastChartedSymbol} -> ${symbol}, downloading latest data...`);
@@ -4986,12 +4986,12 @@ document.getElementById('update-data-btn')?.addEventListener('click', async () =
                 }
                 count++;
                 status.textContent = `Bulk Updating (${count}/${tickerOptions.length})...`;
-                if (symbol === activeTicker) updateChart(symbol);
             } catch (err) {
                 console.error(`Failed to update ${symbol}:`, err);
             }
         }
         status.textContent = `Bulk Update complete! (${count} tickers)`;
+        if (activeTicker) updateChart(activeTicker, true);
         checkAndNotifyAlarms();
     } else {
         if (!activeTicker) {
@@ -5048,12 +5048,12 @@ document.getElementById('extend-history-btn').addEventListener('click', async ()
                 }
                 count++;
                 status.textContent = `Bulk Extending (${count}/${tickerOptions.length})...`;
-                if (symbol === activeTicker) updateChart(symbol);
             } catch (err) {
                 console.error(`Failed to extend ${symbol}:`, err);
             }
         }
         status.textContent = `Bulk Extension complete! (${count} tickers)`;
+        if (activeTicker) updateChart(activeTicker, true);
     } else {
         if (!activeTicker) {
             alert("Please select a ticker first.");

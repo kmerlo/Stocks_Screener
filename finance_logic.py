@@ -58,12 +58,12 @@ class FinanceLogic:
             # (including the correct closing price) will be retrieved and will overwrite the incomplete record.
             start_date = last_entry.date.date()
             print(f"DEBUG: Performing incremental update for {symbol} starting from {start_date} (Last DB entry: {last_entry.date.date()})")
-            print(f"DEBUG: yf.download(symbol='{symbol}', start='{start_date}', auto_adjust=False, repair=True)")
-            df = yf.download(symbol, start=start_date, auto_adjust=False, repair=True)
+            print(f"DEBUG: yf.download(symbol='{symbol}', start='{start_date}', auto_adjust=False)")
+            df = yf.download(symbol, start=start_date, auto_adjust=False)
         else:
             print(f"DEBUG: Performing initial download for {symbol} using period='{period}'")
-            print(f"DEBUG: yf.download(symbol='{symbol}', period='{period}', auto_adjust=False, repair=True)")
-            df = yf.download(symbol, period=period, auto_adjust=False, repair=True)
+            print(f"DEBUG: yf.download(symbol='{symbol}', period='{period}', auto_adjust=False)")
+            df = yf.download(symbol, period=period, auto_adjust=False)
         
         if df.empty:
             print(f"No new data downloaded for {symbol}")
@@ -88,8 +88,8 @@ class FinanceLogic:
         end_date = oldest_entry.date
         start_date = end_date - timedelta(days=365 * years)
         
-        print(f"DEBUG: yf.download(symbol='{symbol}', start='{start_date.date()}', end='{end_date.date()}', auto_adjust=False, repair=True)")
-        df = yf.download(symbol, start=start_date, end=end_date, auto_adjust=False, repair=True)
+        print(f"DEBUG: yf.download(symbol='{symbol}', start='{start_date.date()}', end='{end_date.date()}', auto_adjust=False)")
+        df = yf.download(symbol, start=start_date, end=end_date, auto_adjust=False)
         
         if df.empty:
             print(f"No older data found for {symbol} before {end_date.date()}")
