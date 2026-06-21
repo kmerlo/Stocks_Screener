@@ -97,6 +97,7 @@ body {
     flex: 1;
     display: flex;
     flex-direction: column;
+    min-height: 0;
     overflow: hidden;
 }
 
@@ -232,6 +233,9 @@ header {
 #portfolio-view {
     overflow-y: auto;
 }
+#alarms-view {
+    overflow-y: auto;
+}
 #screening-view {
     min-height: 0;
     overflow: hidden;
@@ -256,6 +260,17 @@ header {
 
 .hidden {
     display: none !important;
+}
+
+.view-container.hidden {
+    display: flex !important;
+    flex: 0 0 0 !important;
+    height: 0 !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    visibility: hidden !important;
+    pointer-events: none !important;
 }
 
 .collapsible-content {

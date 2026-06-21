@@ -4711,12 +4711,12 @@ document.querySelectorAll('.nav-item').forEach(item => {
 
         const view = item.getAttribute('data-view');
         const target = document.getElementById(`${view}-view`);
-        target.classList.remove('hidden');
+        if (!target) return;
+        // Hide all other views first, then show target
         document.querySelectorAll('.view-container').forEach(v => {
             if (v !== target) v.classList.add('hidden');
         });
-        // Force reflow to ensure flex layout recalculates (prevents Chrome last-child flex bug)
-        void document.getElementById('main-content').offsetHeight;
+        target.classList.remove('hidden');
 
         activeView = view;
         document.getElementById('view-title').textContent = item.textContent;
@@ -7593,7 +7593,7 @@ async function renderAlarmsView() {
 
         alarms.forEach(al => {
             const dr = al.drawing;
-            if (!dr) return;
+            if (!dr || !dr.points || dr.points.length === 0) return;
 
             const row = document.createElement('tr');
             row.className = 'alarm-row';
@@ -8373,16 +8373,13 @@ function enrichFundamentalData(data) {
             if ((item.avg_vol_10d === undefined || item.avg_vol_10d === null) && raw.averageDailyVolume10Day !== undefined) {
                 item.avg_vol_10d = raw.averageDailyVolume10Day;
             }
-            if ((item.ex_div_date === undefined || item.ex_div_date === null) && raw.lastDividendDate !== undefined) {
-                item.ex_div_date = raw.lastDividendDate;
-            }
             // Compute day distances from dates
             const now = Date.now();
             if (typeof item.earnings_date === 'number') {
                 item.days_to_earnings = Math.round((item.earnings_date * 1000 - now) / 86400000);
             }
-            if (typeof item.last_dividend_date === 'number') {
-                item.days_since_dividend = Math.round((now - item.last_dividend_date * 1000) / 86400000);
+            if (typeof item.ex_div_date === 'number') {
+                item.days_since_dividend = Math.round((now - item.ex_div_date * 1000) / 86400000);
             }
         } catch (e) {}
         return item;
@@ -9721,6 +9718,26 @@ function renderPortfolioSummary(data) {
         }
     }
 
+    // Total P&L + Coupons + Dividends
+    const totalIncome = unPnl + (summary.total_net_coupons ?? 0) + (summary.total_net_dividends ?? 0);
+    const incomeEl = document.getElementById('portfolio-total-income-display');
+    if (incomeEl) {
+        incomeEl.textContent = `${totalIncome.toFixed(2)} ${curr}`;
+        incomeEl.style.color = totalIncome >= 0 ? 'var(--up-color)' : 'var(--down-color)';
+    }
+    const incomePct = document.getElementById('portfolio-total-income-pct');
+    if (incomePct) {
+        const totalInvested = summary.total_invested ?? 0;
+        if (totalInvested !== 0) {
+            const pct = (totalIncome / totalInvested) * 100;
+            incomePct.textContent = `${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%`;
+            incomePct.style.color = pct >= 0 ? 'var(--up-color)' : 'var(--down-color)';
+        } else {
+            incomePct.textContent = '—';
+            incomePct.style.color = 'var(--text-secondary)';
+        }
+    }
+
     const rePnl = summary.total_realized_pl;
     const reEl = document.getElementById('portfolio-realized-display');
     reEl.textContent = `${rePnl.toFixed(2)} ${curr}`;
@@ -9873,6 +9890,9 @@ function renderPortfolioPositions() {
         pnlBaseMin: v('pos-filter-pnl-base-min'), pnlBaseMax: v('pos-filter-pnl-base-max'),
         pnlValMin: v('pos-filter-pnl-val-min'), pnlValMax: v('pos-filter-pnl-val-max'),
         pctBaseMin: v('pos-filter-pct-base-min'), pctBaseMax: v('pos-filter-pct-base-max'),
+        incomeMin: v('pos-filter-income-min'), incomeMax: v('pos-filter-income-max'),
+        adjustedPlMin: v('pos-filter-adjusted-pl-min'), adjustedPlMax: v('pos-filter-adjusted-pl-max'),
+        adjustedPctMin: v('pos-filter-adjusted-pct-min'), adjustedPctMax: v('pos-filter-adjusted-pct-max'),
         pctValMin: v('pos-filter-pct-val-min'), pctValMax: v('pos-filter-pct-val-max'),
         dailyPctMin: v('pos-filter-daily-pct-min'), dailyPctMax: v('pos-filter-daily-pct-max'),
         weightMin: v('pos-filter-weight-min'), weightMax: v('pos-filter-weight-max')
@@ -9912,6 +9932,12 @@ function renderPortfolioPositions() {
         const pctBase = initialBase !== 0 ? (pos.unrealized_pl / initialBase * 100) : 0;
         const pctVal = initialVal !== 0 ? ((pos.unrealized_pl_instrument ?? 0) / initialVal * 100) : 0;
         if (!inMinMax(pctBase, filters.pctBaseMin, filters.pctBaseMax)) return false;
+        const netIncome = pos.net_income_received ?? 0;
+        const adjustedPl = pos.adjusted_pl ?? pos.unrealized_pl;
+        const adjustedPct = initialBase !== 0 ? (adjustedPl / initialBase * 100) : 0;
+        if (!inMinMax(netIncome, filters.incomeMin, filters.incomeMax)) return false;
+        if (!inMinMax(adjustedPl, filters.adjustedPlMin, filters.adjustedPlMax)) return false;
+        if (!inMinMax(adjustedPct, filters.adjustedPctMin, filters.adjustedPctMax)) return false;
         if (!inMinMax(pctVal, filters.pctValMin, filters.pctValMax)) return false;
         if (!inMinMax(pos.daily_change_pct, filters.dailyPctMin, filters.dailyPctMax)) return false;
         const weight = activePortfolioTotalValue > 0 ? (pos.current_value / activePortfolioTotalValue * 100) : 0;
@@ -9950,12 +9976,23 @@ function renderPortfolioPositions() {
                 const pb = ib !== 0 ? ((b.unrealized_pl_instrument ?? 0) / ib * 100) : 0;
                 return (pa - pb) * d;
             }
+            if (k === 'net_income') {
+                va = a.net_income_received ?? 0; vb = b.net_income_received ?? 0;
+                return (va - vb) * d;
+            }
+            if (k === 'adjusted_pct') {
+                const ia = a.current_value - a.unrealized_pl;
+                const ib = b.current_value - b.unrealized_pl;
+                const pa = ia !== 0 ? ((a.adjusted_pl ?? a.unrealized_pl) / ia * 100) : 0;
+                const pb = ib !== 0 ? ((b.adjusted_pl ?? b.unrealized_pl) / ib * 100) : 0;
+                return (pa - pb) * d;
+            }
             va = a[k] ?? 0; vb = b[k] ?? 0;
             return (va - vb) * d;
         });
     }
 
-    const posHeaders = ['ticker','date','days','quantity','pmc','pmc_instrument','current_price','current_value','current_value_instrument','unrealized_pl','unrealized_pl_instrument','pct_base','pct_val','daily_change_pct','weight'];
+    const posHeaders = ['ticker','date','days','quantity','pmc','pmc_instrument','current_price','current_value','current_value_instrument','unrealized_pl','unrealized_pl_instrument','pct_base','net_income','adjusted_pl','adjusted_pct','pct_val','daily_change_pct','weight'];
 
     filtered.forEach(pos => {
         const tr = document.createElement('tr');
@@ -9975,6 +10012,12 @@ function renderPortfolioPositions() {
         const pctBase = initialBase !== 0 ? (pos.unrealized_pl / initialBase * 100) : 0;
         const pctVal = initialVal !== 0 ? ((pos.unrealized_pl_instrument ?? 0) / initialVal * 100) : 0;
         const signalPct = pos.signal_return_pct;
+        const netIncome = pos.net_income_received ?? 0;
+        const adjustedPl = pos.adjusted_pl ?? pnl;
+        const adjustedPct = initialBase !== 0 ? (adjustedPl / initialBase * 100) : 0;
+        const netIncomeColor = netIncome >= 0 ? 'var(--up-color)' : 'var(--down-color)';
+        const adjustedPlColor = adjustedPl >= 0 ? 'var(--up-color)' : 'var(--down-color)';
+        const adjustedPctColor = adjustedPct >= 0 ? 'var(--up-color)' : 'var(--down-color)';
         const pctBaseColor = isSignal ? (signalPct != null && signalPct >= 0 ? 'var(--up-color)' : 'var(--down-color)') : (pctBase >= 0 ? 'var(--up-color)' : 'var(--down-color)');
         const pctValColor = isSignal ? (signalPct != null && signalPct >= 0 ? 'var(--up-color)' : 'var(--down-color)') : (pctVal >= 0 ? 'var(--up-color)' : 'var(--down-color)');
         const instrumentCurrency = pos.currency || curr;
@@ -10006,6 +10049,9 @@ function renderPortfolioPositions() {
             <td style="color: ${pnlColor}; font-weight: bold;">${isSignal ? '—' : pnl.toFixed(2) + ' ' + curr}</td>
             <td class="instrument-col" style="color: ${pnlInstrumentColor}; font-weight: bold;">${isSignal ? '—' : pnlInstrument.toFixed(2) + ' ' + instrumentCurrency}</td>
             <td style="color: ${pctBaseColor}; font-weight: bold;">${isSignal ? (pos.signal_return_pct != null ? (pos.signal_return_pct >= 0 ? '+' : '') + pos.signal_return_pct.toFixed(2) + '%' : '—') : (initialBase === 0 ? '—' : pctBase.toFixed(2) + '%')}</td>
+            <td style="color: ${netIncomeColor};">${netIncome.toFixed(2) + ' ' + curr}</td>
+            <td style="color: ${adjustedPlColor}; font-weight: bold;">${isSignal ? (pos.net_income_received ? adjustedPl.toFixed(2) + ' ' + curr : '—') : adjustedPl.toFixed(2) + ' ' + curr}</td>
+            <td style="color: ${adjustedPctColor}; font-weight: bold;">${isSignal ? (pos.net_income_received ? adjustedPct.toFixed(2) + '%' : '—') : (initialBase === 0 ? '—' : adjustedPct.toFixed(2) + '%')}</td>
             <td class="instrument-col" style="color: ${pctValColor}; font-weight: bold;">${isSignal ? (pos.signal_return_pct != null ? (pos.signal_return_pct >= 0 ? '+' : '') + pos.signal_return_pct.toFixed(2) + '%' : '—') : (initialVal === 0 ? '—' : pctVal.toFixed(2) + '%')}</td>
             <td style="color: ${pos.daily_change_pct != null && pos.daily_change_pct >= 0 ? 'var(--up-color)' : 'var(--down-color)'}; font-weight: bold;">${pos.daily_change_pct != null ? (pos.daily_change_pct >= 0 ? '+' : '') + pos.daily_change_pct.toFixed(2) + '%' : '—'}</td>
             <td style="font-weight: bold;">${isSignal ? '—' : weight.toFixed(1) + '%'}</td>

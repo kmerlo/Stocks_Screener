@@ -1293,6 +1293,48 @@ class FinanceLogic:
                     results.append(fund)
         return results
 
+    def get_ticker_calendar(self, symbol: str):
+        """Fetch next earnings date and ex-dividend date from yfinance."""
+        from datetime import date as _date_type
+        try:
+            ticker = yf.Ticker(symbol)
+            raw = ticker.calendar
+        except Exception:
+            raw = None
+        result = {
+            "earnings_date": None,
+            "earnings_date_days": None,
+            "ex_dividend_date": None,
+            "ex_dividend_date_days": None,
+        }
+        if not raw:
+            return result
+
+        def _to_date(v):
+            if isinstance(v, _date_type):
+                return v
+            if hasattr(v, "date"):
+                return v.date()
+            return None
+
+        try:
+            earnings_dates = raw.get("Earnings Date")
+            if earnings_dates is not None and len(earnings_dates) > 0:
+                dt = _to_date(earnings_dates[0])
+                if dt is not None:
+                    result["earnings_date"] = dt.isoformat()
+                    result["earnings_date_days"] = (dt - _date_type.today()).days
+        except Exception:
+            pass
+        try:
+            ex_div = _to_date(raw.get("Ex-Dividend Date"))
+            if ex_div is not None:
+                result["ex_dividend_date"] = ex_div.isoformat()
+                result["ex_dividend_date_days"] = (ex_div - _date_type.today()).days
+        except Exception:
+            pass
+        return result
+
     def get_fx_rate(self, base: str, quote: str):
         """Fetches current exchange rate from yfinance (base -> quote)."""
         if base == quote:
@@ -1481,6 +1523,26 @@ class FinanceLogic:
                     else:
                         realized_events.append((t.date, tx_year, abs(realized), 'cover_loss', None, t))
                 p["quantity"] += trade_qty
+
+        # Per-ticker dividend and coupon net income tracking
+        ticker_dividends = {}
+        ticker_coupons = {}
+        for _t in transactions:
+            if _t.type == "DIVIDEND":
+                sym = _t.ticker
+                shares = abs(_t.quantity)
+                gross = _t.price * shares * _t.exchange_rate
+                tax = gross * ((_t.tax_rate or 0.0) / 100.0)
+                if _t.quantity >= 0:
+                    ticker_dividends[sym] = ticker_dividends.get(sym, 0.0) + (gross - tax)
+                else:
+                    ticker_dividends[sym] = ticker_dividends.get(sym, 0.0) - (gross + tax)
+            elif _t.type == "COUPON":
+                sym = _t.ticker
+                shares = abs(_t.quantity)
+                gross = _t.price * shares * _t.exchange_rate
+                tax = gross * ((_t.tax_rate or 0.0) / 100.0) if _t.instrument_type == "BOND" else 0.0
+                ticker_coupons[sym] = ticker_coupons.get(sym, 0.0) + (gross - tax)
 
         # --- Fiscal Backpack Computation (Italian 4-year carry, PER BROKER) ---
         from database import Broker as BrokerModel
@@ -1731,6 +1793,13 @@ class FinanceLogic:
                     p["unrealized_pl_instrument"] = 0.0
 
                 p["total_tobin_tax"] = tobin_tax_by_ticker.get(sym, 0.0)
+                net_div = ticker_dividends.get(sym, 0.0)
+                net_cpn = ticker_coupons.get(sym, 0.0)
+                p["net_income_received"] = net_div + net_cpn
+                if has_signal:
+                    p["adjusted_pl"] = p["net_income_received"]
+                else:
+                    p["adjusted_pl"] = (p.get("unrealized_pl", 0.0) or 0.0) + p["net_income_received"]
                 active_positions.append(p)
 
         total_realized_pl = sum(p["realized_pl"] for p in positions.values())

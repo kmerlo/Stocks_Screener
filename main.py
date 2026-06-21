@@ -2,7 +2,7 @@ from fastapi import FastAPI, Depends, HTTPException, Query, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse, StreamingResponse
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 import database as db_mod
 import schemas
 from finance_logic import finance_logic
@@ -775,6 +775,13 @@ def get_ticker_data(symbol: str, db: Session = Depends(get_market_db)):
     data = db.query(db_mod.PriceData).filter(db_mod.PriceData.symbol == symbol).order_by(db_mod.PriceData.date.asc()).all()
     return data
 
+@app.get("/tickers/{symbol}/calendar")
+def get_ticker_calendar(symbol: str):
+    try:
+        return finance_logic.get_ticker_calendar(symbol)
+    except Exception:
+        return {"earnings_date": None, "earnings_date_days": None, "ex_dividend_date": None, "ex_dividend_date_days": None}
+
 @app.post("/screening/run", response_model=List[schemas.ModularScreeningResult])
 def run_modular_screening(request: schemas.ScreeningRequest, db: Session = Depends(get_market_db)):
     # Get tickers based on request - need to query from config db for ticker symbols
@@ -980,15 +987,30 @@ def run_dynamic_screening(request: schemas.DynamicScreeningRequest, db: Session 
     finally:
         config_db.close()
     
-    cols = [
-        {
-            'indicator_type': c.indicator_type,
-            'parameters': c.parameters,
-            'timeframe': c.timeframe or 'D'
-        }
-        for c in request.columns
-    ]
-    results = finance_logic.run_dynamic_screening(db, tickers, cols)
+    # Separate fundamental columns from technical indicator columns
+    fund_columns = [c for c in request.columns if c.indicator_type == 'fundamental']
+    tech_columns = [c for c in request.columns if c.indicator_type != 'fundamental']
+
+    results = []
+    if tech_columns or not fund_columns:
+        cols = [
+            {
+                'indicator_type': c.indicator_type,
+                'parameters': c.parameters,
+                'timeframe': c.timeframe or 'D'
+            }
+            for c in tech_columns or request.columns
+        ]
+        results = finance_logic.run_dynamic_screening(db, tickers, cols)
+    else:
+        # No tech columns, just create empty result stubs
+        for s in tickers:
+            results.append({
+                "symbol": s if hasattr(s, 'symbol') else s,
+                "last_date": "",
+                "last_price": 0.0,
+                "data": {}
+            })
     
     # Enrich results with company name from DB - also need config db for this
     config_db = SessionLocalConfig()
@@ -1009,6 +1031,106 @@ def run_dynamic_screening(request: schemas.DynamicScreeningRequest, db: Session 
             r["name"] = name_map.get(r["symbol"])
     finally:
         config_db.close()
+    
+    # Enrich with fundamental data if needed
+    if fund_columns and results:
+        try:
+            symbols = [r["symbol"] for r in results if r.get("symbol")]
+            fund_records = db.query(db_mod.FundamentalData).filter(
+                db_mod.FundamentalData.symbol.in_(symbols)
+            ).all()
+            fund_map = {f.symbol: f for f in fund_records}
+            
+            for r in results:
+                fund = fund_map.get(r.get("symbol"))
+                if not fund:
+                    continue
+                for col in fund_columns:
+                    params = json.loads(col.parameters)
+                    field = params.get("field")
+                    if not field:
+                        continue
+                    # Try DB column first
+                    val = getattr(fund, field, None)
+                    # Fall back to raw_info if not found
+                    if val is None and fund.raw_info:
+                        try:
+                            raw = json.loads(fund.raw_info)
+                            yf_key = field
+                            # Map frontend field names to yfinance keys
+                            yf_key_map = {
+                                "earnings_date": "earningsTimestamp",
+                                "last_dividend_date": "lastDividendDate",
+                                "change_52w": "fiftyTwoWeekChangePercent",
+                                "sandp_52w_change": "SandP52WeekChange",
+                                "div_date": "dividendDate",
+                                "ex_div_date": "exDividendDate",
+                                "split_date": "lastSplitDate",
+                                "high_52w": "fiftyTwoWeekHigh",
+                                "low_52w": "fiftyTwoWeekLow",
+                                "ma_50d": "fiftyDayAverage",
+                                "ma_200d": "twoHundredDayAverage",
+                                "avg_vol_3m": "averageVolume",
+                                "avg_vol_10d": "averageVolume10days",
+                                "shares_out": "sharesOutstanding",
+                                "float_shares": "floatShares",
+                                "pct_insiders": "heldPercentInsiders",
+                                "pct_institutions": "heldPercentInstitutions",
+                                "shares_short": "sharesShort",
+                                "short_ratio": "shortRatio",
+                                "short_pct_float": "shortPercentOfFloat",
+                                "shares_short_prior": "sharesShortPriorMonth",
+                                "div_rate_fwd": "dividendRate",
+                                "tr_div_rate": "trailingAnnualDividendRate",
+                                "tr_div_yield": "trailingAnnualDividendYield",
+                                "div_yield_5y": "fiveYearAvgDividendYield",
+                                "payout_ratio": "payoutRatio",
+                                "split_factor": "lastSplitFactor",
+                                "enterprise_value": "enterpriseValue",
+                                "peg_ratio": "pegRatio",
+                                "ev_to_revenue": "enterpriseToRevenue",
+                                "ev_to_ebitda": "enterpriseToEbitda",
+                                "return_on_assets": "returnOnAssets",
+                                "return_on_equity": "returnOnEquity",
+                                "revenue_per_share": "revenuePerShare",
+                                "gross_profits": "grossProfits",
+                                "net_income": "netIncomeToCommon",
+                                "ttm_eps": "trailingEps",
+                                "earnings_q_growth": "earningsQuarterlyGrowth",
+                                "cash_per_share": "totalCashPerShare",
+                                "debt_to_equity": "debtToEquity",
+                                "quick_ratio": "quickRatio",
+                                "book_value": "bookValue",
+                                "op_cashflow": "operatingCashflow",
+                                "free_cashflow": "freeCashflow",
+                            }
+                            raw_key = yf_key_map.get(field, field)
+                            if raw_key in raw:
+                                val = raw[raw_key]
+                            # Special handling: dividend_yield from yfinance is raw percent
+                            if field == "dividend_yield" and val is not None:
+                                val = float(val) / 100.0
+                        except (json.JSONDecodeError, ValueError, TypeError):
+                            pass
+                    # Computed fields: derive from other raw_info values
+                    if val is None and fund.raw_info:
+                        try:
+                            raw = json.loads(fund.raw_info)
+                            now_ts = datetime.now().timestamp()
+                            if field == "days_to_earnings":
+                                ts = raw.get("earningsTimestamp")
+                                if ts is not None:
+                                    val = round((int(ts) - now_ts) / 86400)
+                            elif field == "days_since_dividend":
+                                ts = raw.get("lastDividendDate")
+                                if ts is not None:
+                                    val = round((now_ts - int(ts)) / 86400)
+                        except (json.JSONDecodeError, ValueError, TypeError):
+                            pass
+                    if val is not None:
+                        r["data"][f"fundamental_{field}"] = val
+        except Exception as e:
+            print(f"Error enriching fundamental columns: {e}")
     
     return results
 
@@ -1131,16 +1253,19 @@ def delete_drawing(drawing_id: int, db: Session = Depends(get_db)):
 
 @app.delete("/tickers/{symbol}/drawings/")
 def delete_all_drawings(symbol: str, db: Session = Depends(get_db)):
-    db.query(db_mod.Drawing).filter(db_mod.Drawing.symbol == symbol).delete()
+    drawings = db.query(db_mod.Drawing).filter(db_mod.Drawing.symbol == symbol).all()
+    count = len(drawings)
+    for d in drawings:
+        db.delete(d)
     db.commit()
-    return {"message": f"All drawings for {symbol} deleted"}
+    return {"message": f"Deleted {count} drawings for {symbol}"}
 
 # --- Alarm Endpoints ---
 
 @app.get("/alarms/", response_model=List[schemas.AlarmOut])
 def get_all_alarms(db: Session = Depends(get_db)):
-    """Retrieve all alarms across all tickers."""
-    return db.query(db_mod.Alarm).all()
+    """Retrieve all alarms across all tickers with their drawings."""
+    return db.query(db_mod.Alarm).options(joinedload(db_mod.Alarm.drawing)).all()
 
 @app.post("/drawings/{drawing_id}/alarm", response_model=schemas.Alarm)
 def set_alarm(drawing_id: int, alarm_data: schemas.AlarmCreate, db: Session = Depends(get_db)):
@@ -1240,21 +1365,21 @@ def update_ticker_fundamentals(symbol: str, db: Session = Depends(get_market_db)
     return db_fund
 
 @app.get("/lists/{list_id}/fundamentals", response_model=List[schemas.FundamentalData])
-def get_list_fundamentals(list_id: int, db: Session = Depends(get_db)):
+def get_list_fundamentals(list_id: int, config_db: Session = Depends(get_config_db), market_db: Session = Depends(get_market_db)):
     if list_id == 0:
-        db_tickers = db.query(db_mod.Ticker).all()
+        db_tickers = config_db.query(db_mod.Ticker).all()
     else:
-        db_tickers = db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == list_id).all()
+        db_tickers = config_db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == list_id).all()
     
     symbols = list(set([t.symbol for t in db_tickers if t.symbol]))
-    return db.query(db_mod.FundamentalData).filter(db_mod.FundamentalData.symbol.in_(symbols)).all()
+    return market_db.query(db_mod.FundamentalData).filter(db_mod.FundamentalData.symbol.in_(symbols)).all()
 
 @app.post("/lists/{list_id}/fundamentals/update")
-def update_list_fundamentals(list_id: int, db: Session = Depends(get_db)):
+def update_list_fundamentals(list_id: int, config_db: Session = Depends(get_config_db), market_db: Session = Depends(get_market_db)):
     if list_id == 0:
-        db_tickers = db.query(db_mod.Ticker).all()
+        db_tickers = config_db.query(db_mod.Ticker).all()
     else:
-        db_tickers = db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == list_id).all()
+        db_tickers = config_db.query(db_mod.Ticker).filter(db_mod.Ticker.list_id == list_id).all()
         
     if not db_tickers:
         raise HTTPException(status_code=404, detail="No tickers found")
@@ -1269,7 +1394,7 @@ def update_list_fundamentals(list_id: int, db: Session = Depends(get_db)):
             seen.add(t.symbol)
             unique_tickers.append(t)
     
-    finance_logic.update_list_fundamentals(db, unique_tickers)
+    finance_logic.update_list_fundamentals(market_db, unique_tickers)
     return {"message": f"Planned update for {len(unique_tickers)} unique tickers"}
 
 # === Investing.com Portfolio ===

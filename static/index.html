@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Financial Screener & Monitor</title>
-    <link rel="stylesheet" href="style.css?v=10">
+    <link rel="stylesheet" href="style.css?v=20">
     <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css">
@@ -21,8 +21,8 @@
             <div class="nav-item" data-view="portfolio">Portafoglio</div>
             <div class="nav-item" data-view="lists">Ticker Lists</div>
             <div class="nav-item" data-view="screening">Screening</div>
-            <div class="nav-item" data-view="historical">Dati Storici</div>
             <div class="nav-item" data-view="alarms">Allarmi</div>
+            <div class="nav-item" data-view="historical">Dati Storici</div>
             <div class="nav-item" data-view="maintenance">Manutenzione DB</div>
             <div class="nav-item" data-view="gsheet">Google Sheet</div>
             <div class="nav-item" data-view="investing">Investing.com</div>
@@ -693,6 +693,35 @@
             </div>
         </div>
 
+        <!-- Alarms View -->
+        <div id="alarms-view" class="view-container hidden">
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+                    <h3>Gestione Allarmi</h3>
+                    <button id="refresh-alarms-btn" class="secondary">🔄 Aggiorna Lista</button>
+                </div>
+
+                <div style="overflow-x: auto; border: 1px solid var(--border-color); border-radius: 6px;">
+                    <table id="alarms-table">
+                        <thead>
+                            <tr>
+                                <th>Ticker</th>
+                                <th>Tipo Linea</th>
+                                <th>Posizione/Prezzo</th>
+                                <th>Condizione</th>
+                                <th>Stato</th>
+                                <th>Scatto / Prezzo</th>
+                                <th>Azioni</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alarms-body">
+                            <!-- Alarms will be listed here -->
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
         <!-- Historical Data View -->
         <div id="historical-view" class="view-container hidden">
             <div class="card">
@@ -962,6 +991,11 @@
                         <div id="portfolio-unrealized-pct" style="font-size: 1rem; margin-top: 2px;">—</div>
                     </div>
                     <div class="stat-box" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; text-align: center;">
+                        <div style="font-size: 0.9rem; color: var(--text-secondary);">P&L Aperto + Cedole + Div.</div>
+                        <div id="portfolio-total-income-display" style="font-size: 1.5rem; font-weight: bold; margin-top: 5px;">0.00</div>
+                        <div id="portfolio-total-income-pct" style="font-size: 1rem; margin-top: 2px;">—</div>
+                    </div>
+                    <div class="stat-box" style="background: rgba(255,255,255,0.05); padding: 15px; border-radius: 8px; text-align: center;">
                         <div style="font-size: 0.9rem; color: var(--text-secondary);">P&L Realizzato</div>
                         <div id="portfolio-realized-display" style="font-size: 1.5rem; font-weight: bold; margin-top: 5px;">0.00</div>
                     </div>
@@ -1028,6 +1062,9 @@
                                 <th onclick="togglePosSort('unrealized_pl')" class="sortable-th">P&L (Base) <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('unrealized_pl_instrument')" class="sortable-th instrument-col">P&L (Valuta) <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('pct_base')" class="sortable-th">% (Base) <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('net_income')" class="sortable-th">Inc. Div./Ced. <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('adjusted_pl')" class="sortable-th">P&L Rett. (Base) <span class="sort-arrow"></span></th>
+                                <th onclick="togglePosSort('adjusted_pct')" class="sortable-th">% Rett. (Base) <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('pct_val')" class="sortable-th instrument-col">% (Valuta) <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('daily_change_pct')" class="sortable-th">Var. % Giornaliera <span class="sort-arrow"></span></th>
                                 <th onclick="togglePosSort('weight')" class="sortable-th">% Portfolio <span class="sort-arrow"></span></th>
@@ -1049,6 +1086,9 @@
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pnl-base-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pnl-base-max" class="portfolio-pos-filter"></div></th>
                                 <th class="instrument-col"><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pnl-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pnl-val-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pct-base-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pct-base-max" class="portfolio-pos-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-income-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-income-max" class="portfolio-pos-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-adjusted-pl-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-adjusted-pl-max" class="portfolio-pos-filter"></div></th>
+                                <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-adjusted-pct-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-adjusted-pct-max" class="portfolio-pos-filter"></div></th>
                                 <th class="instrument-col"><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-pct-val-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-pct-val-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-daily-pct-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-daily-pct-max" class="portfolio-pos-filter"></div></th>
                                 <th><div class="minmax-filter"><input type="text" placeholder="da" id="pos-filter-weight-min" class="portfolio-pos-filter"><input type="text" placeholder="a" id="pos-filter-weight-max" class="portfolio-pos-filter"></div></th>
@@ -1118,35 +1158,6 @@
                         </thead>
                         <tbody id="portfolio-history-body">
                             <!-- Transactions will be rendered here -->
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <!-- Alarms View -->
-        <div id="alarms-view" class="view-container hidden">
-            <div class="card">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                    <h3>Gestione Allarmi</h3>
-                    <button id="refresh-alarms-btn" class="secondary">🔄 Aggiorna Lista</button>
-                </div>
-
-                <div style="overflow-x: auto; border: 1px solid var(--border-color); border-radius: 6px;">
-                    <table id="alarms-table">
-                        <thead>
-                            <tr>
-                                <th>Ticker</th>
-                                <th>Tipo Linea</th>
-                                <th>Posizione/Prezzo</th>
-                                <th>Condizione</th>
-                                <th>Stato</th>
-                                <th>Scatto / Prezzo</th>
-                                <th>Azioni</th>
-                            </tr>
-                        </thead>
-                        <tbody id="alarms-body">
-                            <!-- Alarms will be listed here -->
                         </tbody>
                     </table>
                 </div>
@@ -1816,7 +1827,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=19"></script>
+    <script src="script.js?v=34"></script>
 </body>
 
 </html>
