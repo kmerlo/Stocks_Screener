@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Financial Screener & Monitor</title>
-    <link rel="stylesheet" href="style.css?v=7">
+    <link rel="stylesheet" href="style.css?v=10">
     <script src="https://unpkg.com/lightweight-charts@4.2.3/dist/lightweight-charts.standalone.production.js"></script>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/themes/dark.css">
@@ -101,6 +101,7 @@
                 </div>
             </div>
             <span id="update-status" style="font-size: 0.75rem; color: #8b949e; margin-left: 10px;"></span>
+            <span id="bulk-indicator" class="bulk-indicator hidden">⟳ Bulk in corso…</span>
         </header>
 
         <!-- Monitoring View -->
@@ -204,6 +205,7 @@
                         <span id="chart-title-main" style="font-weight: bold; color: var(--accent-color); margin-right: 5px;">Select a ticker</span>
                         <span id="chart-title-variation" style="font-family: monospace; font-size: 0.9em;"></span>
                         <span id="chart-title-daily-variation" style="font-family: monospace; font-size: 0.9em; margin-left: 10px;"></span>
+                        <span id="chart-dates-info" style="font-family: monospace; font-size: 0.85em; margin-left: 10px; color: var(--text-secondary);"></span>
                     </div>
                     <div class="drawing-toolbar-sep"></div>
 
@@ -499,6 +501,8 @@
                             <option value="bbands">Bollinger Bands</option>
                             <option value="cci">CCI</option>
                             <option value="atr">ATR</option>
+                            <option value="" disabled>━━━ Fondamentali ━━━</option>
+                            <option value="fundamental">Campo Fondamentale...</option>
                         </select>
                     </div>
                 </div>
@@ -666,6 +670,24 @@
                                 <!-- Results -->
                             </tbody>
                         </table>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Configuration View -->
+        <div id="configuration-view" class="view-container hidden">
+            <div class="card">
+                <h3>Configurazione</h3>
+                <div style="margin-top: 20px;">
+                    <div class="control-group" style="margin-bottom: 15px;">
+                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
+                            <input type="checkbox" id="config-reopen-fundamentals">
+                            Riapri automaticamente i fondamentali al cambio ticker
+                        </label>
+                        <small style="color: var(--text-secondary); display: block; margin-left: 28px;">
+                            Se attivo, i dati fondamentali verranno mostrati automaticamente ogni volta che selezioni un nuovo ticker, anche se li avevi nascosti.
+                        </small>
                     </div>
                 </div>
             </div>
@@ -1130,23 +1152,6 @@
                 </div>
             </div>
         </div>
-        <!-- Configuration View -->
-        <div id="configuration-view" class="view-container hidden">
-            <div class="card">
-                <h3>Configurazione</h3>
-                <div style="margin-top: 20px;">
-                    <div class="control-group" style="margin-bottom: 15px;">
-                        <label style="display: flex; align-items: center; gap: 10px; cursor: pointer;">
-                            <input type="checkbox" id="config-reopen-fundamentals">
-                            Riapri automaticamente i fondamentali al cambio ticker
-                        </label>
-                        <small style="color: var(--text-secondary); display: block; margin-left: 28px;">
-                            Se attivo, i dati fondamentali verranno mostrati automaticamente ogni volta che selezioni un nuovo ticker, anche se li avevi nascosti.
-                        </small>
-                    </div>
-                </div>
-            </div>
-        </div>
     </div>
     <!-- Indicator Configuration Modal -->
     <div id="indicator-modal-overlay" class="modal-overlay hidden">
@@ -1223,6 +1228,7 @@
             </div>
             <div class="modal-footer">
                 <button class="secondary" onclick="closeIndicatorModal()">Annulla</button>
+                <button id="modal-apply-close-btn" onclick="confirmAndCloseIndicatorModal()">Applica e Chiudi</button>
                 <button id="modal-confirm-btn" onclick="confirmIndicatorModal()">Applica</button>
             </div>
         </div>
@@ -1810,7 +1816,7 @@
         </div>
     </div>
 
-    <script src="script.js?v=17"></script>
+    <script src="script.js?v=19"></script>
 </body>
 
 </html>

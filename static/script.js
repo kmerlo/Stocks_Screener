@@ -13,6 +13,19 @@ let activeTicker = null;
 let activeTickerName = null;
 let activeTickerAlias = null;
 let lastChartedSymbol = null;
+let bulkUpdateInProgress = false;
+function updateBulkIndicator() {
+    const el = document.getElementById('bulk-indicator');
+    if (!el) return;
+    if (bulkUpdateInProgress) {
+        el.textContent = '⟳ Bulk in corso…';
+        el.className = 'bulk-indicator';
+    } else {
+        el.textContent = '✓ Bulk completato';
+        el.className = 'bulk-indicator done';
+        setTimeout(() => { if (!bulkUpdateInProgress) el.classList.add('hidden'); }, 3000);
+    }
+}
 let mainChart = null;
 let priceSeries = null;
 let mainLegend = null;
@@ -107,7 +120,7 @@ function activateChartSlot(index) {
     updateVariation();
     renderActiveIndicatorsUI();
     reattachDrawingListeners();
-    if (slot.ticker) loadFundamentalData(slot.ticker);
+    if (slot.ticker) { loadFundamentalData(slot.ticker); updateTickerDates(slot.ticker); }
     // Show last candle in legend when switching slots
     // Sync price scale mode for compare ticker
     if (slot.chart) {
@@ -1516,11 +1529,43 @@ document.getElementById('compare-list-select').addEventListener('change', async 
     if (activeTicker) updateChart(activeTicker);
 });
 
+function formatDate(isoStr) {
+    if (!isoStr) return '';
+    const d = new Date(isoStr + 'T00:00:00');
+    return d.toLocaleDateString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+function daysLabel(days) {
+    if (days === null || days === undefined) return '';
+    if (days < 0) return `(${Math.abs(days)}gg fa)`;
+    if (days === 0) return '(oggi)';
+    return `(tra ${days}gg)`;
+}
+
+async function updateTickerDates(symbol) {
+    const el = document.getElementById('chart-dates-info');
+    if (!el) return;
+    if (!symbol) { el.textContent = ''; return; }
+    try {
+        const data = await apiCall(`/tickers/${encodeURIComponent(symbol)}/calendar`);
+        const parts = [];
+        if (data.earnings_date) {
+            parts.push(`Utili: ${formatDate(data.earnings_date)} ${daysLabel(data.earnings_date_days)}`);
+        }
+        if (data.ex_dividend_date) {
+            parts.push(`Div: ${formatDate(data.ex_dividend_date)} ${daysLabel(data.ex_dividend_date_days)}`);
+        }
+        el.textContent = parts.length ? parts.join(' | ') : '';
+    } catch (err) {
+        el.textContent = '';
+    }
+}
+
 async function updateChart(symbol, skipAutoDownload = false) {
     if (!symbol) return;
     if (!mainChart || chartSlots.length === 0) return;
 
-    if (symbol !== lastChartedSymbol && !skipAutoDownload) {
+    if (symbol !== lastChartedSymbol && !skipAutoDownload && !bulkUpdateInProgress) {
         const status = document.getElementById('update-status');
         if (status) status.textContent = `⟳ Aggiorno ${symbol}...`;
         console.log(`[updateChart] Ticker change detected ${lastChartedSymbol} -> ${symbol}, downloading latest data...`);
@@ -1559,6 +1604,8 @@ async function updateChart(symbol, skipAutoDownload = false) {
         const aliasPart = activeTickerAlias ? ` «${activeTickerAlias}»` : '';
         titleMain.textContent = activeTickerName ? `${symbol} - ${activeTickerName}${aliasPart}` : symbol + aliasPart;
     }
+
+    updateTickerDates(symbol);
 
     console.log(`Updating chart for: ${symbol}`);
 
@@ -1939,6 +1986,7 @@ function getDefaultParams(type) {
         case 'stoch': return { k: 14, d: 3, smooth_k: 3 };
         case 'roc': return { length: 12 };
         case 'bbp': return { length: 20, std: 2 };
+        case 'fundamental': return { field: 'market_cap' };
         default: return { length: 14 };
     }
 }
@@ -1954,7 +2002,7 @@ function buildModalParamsSection(type, params) {
         section.appendChild(row);
     };
 
-    if (_modalIsScreening) {
+    if (_modalIsScreening && type !== 'fundamental') {
         addRow('Timeframe', `
             <select id="mp-timeframe" style="flex: 1;">
                 <option value="D">Giornaliero (D)</option>
@@ -1995,6 +2043,12 @@ function buildModalParamsSection(type, params) {
             addRow('Periodo Lento', `<input type="number" id="mp-slow" min="1" max="200" value="${params.slow || 26}">`);
             addRow('Segnale', `<input type="number" id="mp-signal" min="1" max="200" value="${params.signal || 9}">`);
             break;
+        case 'fundamental':
+            const fieldOpts = FUNDAMENTAL_COLUMNS.map(c =>
+                `<option value="${c.field}" ${c.field === (params.field || 'market_cap') ? 'selected' : ''}>${c.label}</option>`
+            ).join('');
+            addRow('Campo Fondamentale', `<select id="mp-field" style="flex:1">${fieldOpts}</select>`);
+            break;
     }
 }
 
@@ -2018,6 +2072,10 @@ function readModalParams(type) {
             p.fast = g('mp-fast') || 12;
             p.slow = g('mp-slow') || 26;
             p.signal = g('mp-signal') || 9; break;
+        case 'fundamental':
+            const fieldEl = document.getElementById('mp-field');
+            p.field = fieldEl ? fieldEl.value : 'market_cap';
+            break;
     }
     return p;
 }
@@ -2191,26 +2249,24 @@ async function confirmIndicatorModal() {
     const params = readModalParams(type);
 
     if (_modalIsScreening) {
+        const body = {
+            indicator_type: type,
+            parameters: JSON.stringify(params)
+        };
+        if (type !== 'fundamental') {
+            body.timeframe = document.getElementById('mp-timeframe')?.value || 'D';
+        }
         try {
             if (_modalScreeningColId) {
                 // UPDATE existing column
-                await apiCall(`/screening/columns/${_modalScreeningColId}`, 'PUT', {
-                    indicator_type: type,
-                    parameters: JSON.stringify(params),
-                    timeframe: document.getElementById('mp-timeframe')?.value || 'D'
-                });
+                await apiCall(`/screening/columns/${_modalScreeningColId}`, 'PUT', body);
             } else {
                 // ADD new column
-                await apiCall(`/screening/sheets/${activeScreeningSheetId}/columns/`, 'POST', {
-                    indicator_type: type,
-                    parameters: JSON.stringify(params),
-                    timeframe: document.getElementById('mp-timeframe')?.value || 'D'
-                });
+                await apiCall(`/screening/sheets/${activeScreeningSheetId}/columns/`, 'POST', body);
             }
             await loadScreeningSheets();
             const sheet = screeningSheets.find(s => s.id == activeScreeningSheetId);
             renderActiveColumnsUI(sheet);
-            closeIndicatorModal();
         } catch (err) {
             alert("Errore nel salvataggio della colonna: " + err.message);
         }
@@ -2270,6 +2326,11 @@ async function confirmIndicatorModal() {
     closeIndicatorModal();
     renderActiveIndicatorsUI();
     if (activeTicker) updateChart(activeTicker);
+}
+
+async function confirmAndCloseIndicatorModal() {
+    await confirmIndicatorModal();
+    closeIndicatorModal();
 }
 
 function addIndicator(type) {
@@ -4649,8 +4710,13 @@ document.querySelectorAll('.nav-item').forEach(item => {
         item.classList.add('active');
 
         const view = item.getAttribute('data-view');
-        document.querySelectorAll('.view-container').forEach(v => v.classList.add('hidden'));
-        document.getElementById(`${view}-view`).classList.remove('hidden');
+        const target = document.getElementById(`${view}-view`);
+        target.classList.remove('hidden');
+        document.querySelectorAll('.view-container').forEach(v => {
+            if (v !== target) v.classList.add('hidden');
+        });
+        // Force reflow to ensure flex layout recalculates (prevents Chrome last-child flex bug)
+        void document.getElementById('main-content').offsetHeight;
 
         activeView = view;
         document.getElementById('view-title').textContent = item.textContent;
@@ -4975,20 +5041,27 @@ document.getElementById('update-data-btn')?.addEventListener('click', async () =
         if (!confirm(`Update data for ALL ${tickerOptions.length} tickers in this list?`)) return;
 
         status.textContent = `Bulk Updating (0/${tickerOptions.length})...`;
+        bulkUpdateInProgress = true;
+        updateBulkIndicator();
         let count = 0;
-        for (const symbol of tickerOptions) {
-            const tickerId = window.tickerIdMap?.[symbol];
-            try {
-                if (tickerId) {
-                    await apiCall(`/tickers/by-id/${tickerId}/update-data/?years=${years}`, 'POST');
-                } else {
-                    await apiCall(`/tickers/${symbol}/update-data/?years=${years}`, 'POST');
+        try {
+            for (const symbol of tickerOptions) {
+                const tickerId = window.tickerIdMap?.[symbol];
+                try {
+                    if (tickerId) {
+                        await apiCall(`/tickers/by-id/${tickerId}/update-data/?years=${years}`, 'POST');
+                    } else {
+                        await apiCall(`/tickers/${symbol}/update-data/?years=${years}`, 'POST');
+                    }
+                    count++;
+                    status.textContent = `Bulk Updating (${count}/${tickerOptions.length})...`;
+                } catch (err) {
+                    console.error(`Failed to update ${symbol}:`, err);
                 }
-                count++;
-                status.textContent = `Bulk Updating (${count}/${tickerOptions.length})...`;
-            } catch (err) {
-                console.error(`Failed to update ${symbol}:`, err);
             }
+        } finally {
+            bulkUpdateInProgress = false;
+            updateBulkIndicator();
         }
         status.textContent = `Bulk Update complete! (${count} tickers)`;
         if (activeTicker) updateChart(activeTicker, true);
@@ -5037,20 +5110,27 @@ document.getElementById('extend-history-btn').addEventListener('click', async ()
         if (!confirm(`Extend history by ${years} years for ALL ${tickerOptions.length} tickers in this list?`)) return;
 
         status.textContent = `Bulk Extending (0/${tickerOptions.length})...`;
+        bulkUpdateInProgress = true;
+        updateBulkIndicator();
         let count = 0;
-        for (const symbol of tickerOptions) {
-            try {
-                const tid = window.tickerIdMap?.[symbol];
-                if (tid) {
-                    await apiCall(`/tickers/by-id/${tid}/extend-history/${years}`, 'POST');
-                } else {
-                    await apiCall(`/tickers/${symbol}/extend-history/${years}`, 'POST');
+        try {
+            for (const symbol of tickerOptions) {
+                try {
+                    const tid = window.tickerIdMap?.[symbol];
+                    if (tid) {
+                        await apiCall(`/tickers/by-id/${tid}/extend-history/${years}`, 'POST');
+                    } else {
+                        await apiCall(`/tickers/${symbol}/extend-history/${years}`, 'POST');
+                    }
+                    count++;
+                    status.textContent = `Bulk Extending (${count}/${tickerOptions.length})...`;
+                } catch (err) {
+                    console.error(`Failed to extend ${symbol}:`, err);
                 }
-                count++;
-                status.textContent = `Bulk Extending (${count}/${tickerOptions.length})...`;
-            } catch (err) {
-                console.error(`Failed to extend ${symbol}:`, err);
             }
+        } finally {
+            bulkUpdateInProgress = false;
+            updateBulkIndicator();
         }
         status.textContent = `Bulk Extension complete! (${count} tickers)`;
         if (activeTicker) updateChart(activeTicker, true);
@@ -5514,8 +5594,15 @@ function renderActiveColumnsUI(sheet) {
         const tag = document.createElement('div');
         tag.className = 'indicator-tag';
         tag.style.borderLeft = `4px solid var(--accent-color)`;
+        let label;
+        if (col.indicator_type.toLowerCase() === 'fundamental') {
+            const fundCol = FUNDAMENTAL_COLUMNS.find(c => c.field === params.field);
+            label = fundCol ? fundCol.label : params.field;
+        } else {
+            label = `${col.indicator_type.toUpperCase()}(${Object.values(params).join(',')}) [${col.timeframe}]`;
+        }
         tag.innerHTML =
-            `<span>${col.indicator_type.toUpperCase()}(${Object.values(params).join(',')}) [${col.timeframe}]</span> ` +
+            `<span>${label}</span> ` +
             `<span class="tag-edit" title="Modifica" style="cursor:pointer; margin-left:8px;" onclick="editScreeningColumn('${col.indicator_type}', ${col.id})">✎</span>` +
             `<span class="tag-remove" title="Rimuovi" onclick="removeColumn(${col.id})">×</span>`;
         container.appendChild(tag);
@@ -5634,6 +5721,9 @@ async function runDynamicScreening(btn) {
 function getColumnKey(col) {
     try {
         const params = JSON.parse(col.parameters);
+        if (col.indicator_type.toLowerCase() === 'fundamental') {
+            return `fundamental_${params.field}`;
+        }
         const paramStr = Object.entries(params).map(([k, v]) => `${k}${v}`).join('_').toLowerCase();
         const baseKey = col.indicator_type.toLowerCase();
         const timeframe = col.timeframe || 'D';
@@ -5641,6 +5731,11 @@ function getColumnKey(col) {
     } catch (e) {
         return col.indicator_type.toLowerCase();
     }
+}
+
+function getFundamentalFormat(field) {
+    const col = FUNDAMENTAL_COLUMNS.find(c => c.field === field);
+    return col ? col.format : null;
 }
 
 function renderDynamicScreeningTable(sheet, results) {
@@ -5665,12 +5760,22 @@ function renderDynamicScreeningTable(sheet, results) {
         th.setAttribute('data-sort', key);
         th.style.cursor = 'pointer';
 
-        // Check if it's a Moving Average to show a richer header
-        const isMA = ['sma', 'ema', 'wma'].includes(col.indicator_type.toLowerCase());
-        const headerTitle = col.indicator_type.toUpperCase();
-        const paramVal = Object.values(params).join(',');
+        const isFund = col.indicator_type.toLowerCase() === 'fundamental';
+        const isMA = !isFund && ['sma', 'ema', 'wma'].includes(col.indicator_type.toLowerCase());
 
-        th.innerHTML = `${headerTitle}(${paramVal}) [${col.timeframe || 'D'}] <span class="sort-icon">↕</span>`;
+        let headerTitle;
+        if (isFund) {
+            const fundCol = FUNDAMENTAL_COLUMNS.find(c => c.field === params.field);
+            headerTitle = fundCol ? fundCol.label : params.field;
+        } else {
+            headerTitle = col.indicator_type.toUpperCase();
+        }
+        const paramVal = isFund ? '' : Object.values(params).join(',');
+        const tf = col.timeframe || 'D';
+
+        th.innerHTML = isFund
+            ? `${headerTitle} <span class="sort-icon">↕</span>`
+            : `${headerTitle}(${paramVal}) [${tf}] <span class="sort-icon">↕</span>`;
         if (isMA) {
             th.title = "Mostra: Valore, Distanza % e Giorni Trend";
         }
@@ -5686,24 +5791,39 @@ function renderDynamicScreeningTable(sheet, results) {
     filterRow.innerHTML = '<th></th><th></th><th></th><th></th>';
     sheet.columns.forEach(col => {
         const key = getColumnKey(col);
-        const isMA = ['sma', 'ema', 'wma'].includes(col.indicator_type.toLowerCase());
+        const isFund = col.indicator_type.toLowerCase() === 'fundamental';
+        const isMA = !isFund && ['sma', 'ema', 'wma'].includes(col.indicator_type.toLowerCase());
         const cfg = dynamicFilters[key] || { min: -Infinity, max: Infinity };
         const th = document.createElement('th');
 
-        let filterHtml = `
-            <div class="range-filter">
-                <input type="number" step="0.1" placeholder="${isMA ? 'Dist Min' : 'Min'}" class="dynamic-filter" data-col="${key}" data-type="min" value="${cfg.min === -Infinity ? '' : cfg.min}">
-                <input type="number" step="0.1" placeholder="${isMA ? 'Dist Max' : 'Max'}" class="dynamic-filter" data-col="${key}" data-type="max" value="${cfg.max === Infinity ? '' : cfg.max}">
-            </div>`;
-
-        if (isMA) {
-            const daysKey = `${key}_days_filter`;
-            const daysCfg = dynamicFilters[daysKey] || { min: -Infinity, max: Infinity };
-            filterHtml += `
-                <div class="range-filter" style="margin-top:5px">
-                    <input type="number" step="1" placeholder="Days Min" class="dynamic-filter" data-col="${daysKey}" data-type="min" value="${daysCfg.min === -Infinity ? '' : daysCfg.min}">
-                    <input type="number" step="1" placeholder="Days Max" class="dynamic-filter" data-col="${daysKey}" data-type="max" value="${daysCfg.max === Infinity ? '' : daysCfg.max}">
+        let filterHtml;
+        if (isFund) {
+            const fundColDef = FUNDAMENTAL_COLUMNS.find(c => c.field === JSON.parse(col.parameters).field);
+            if (fundColDef && fundColDef.type === 'range') {
+                filterHtml = `
+                    <div class="range-filter">
+                        <input type="number" step="0.1" placeholder="Min" class="dynamic-filter" data-col="${key}" data-type="min" value="${cfg.min === -Infinity ? '' : cfg.min}">
+                        <input type="number" step="0.1" placeholder="Max" class="dynamic-filter" data-col="${key}" data-type="max" value="${cfg.max === Infinity ? '' : cfg.max}">
+                    </div>`;
+            } else {
+                filterHtml = '';
+            }
+        } else {
+            filterHtml = `
+                <div class="range-filter">
+                    <input type="number" step="0.1" placeholder="${isMA ? 'Dist Min' : 'Min'}" class="dynamic-filter" data-col="${key}" data-type="min" value="${cfg.min === -Infinity ? '' : cfg.min}">
+                    <input type="number" step="0.1" placeholder="${isMA ? 'Dist Max' : 'Max'}" class="dynamic-filter" data-col="${key}" data-type="max" value="${cfg.max === Infinity ? '' : cfg.max}">
                 </div>`;
+
+            if (isMA) {
+                const daysKey = `${key}_days_filter`;
+                const daysCfg = dynamicFilters[daysKey] || { min: -Infinity, max: Infinity };
+                filterHtml += `
+                    <div class="range-filter" style="margin-top:5px">
+                        <input type="number" step="1" placeholder="Days Min" class="dynamic-filter" data-col="${daysKey}" data-type="min" value="${daysCfg.min === -Infinity ? '' : daysCfg.min}">
+                        <input type="number" step="1" placeholder="Days Max" class="dynamic-filter" data-col="${daysKey}" data-type="max" value="${daysCfg.max === Infinity ? '' : daysCfg.max}">
+                    </div>`;
+            }
         }
 
         th.innerHTML = filterHtml;
@@ -5787,9 +5907,14 @@ function updateDynamicScreeningUI(sheet) {
         sheet.columns.forEach(col => {
             const key = getColumnKey(col);
             const val = res.data[key];
-            const isMA = ['sma', 'ema', 'wma'].includes(col.indicator_type.toLowerCase());
+            const isFund = col.indicator_type.toLowerCase() === 'fundamental';
+            const isMA = !isFund && ['sma', 'ema', 'wma'].includes(col.indicator_type.toLowerCase());
 
-            if (isMA && val !== null && val !== undefined) {
+            if (isFund) {
+                const params = JSON.parse(col.parameters);
+                const fmt = getFundamentalFormat(params.field);
+                row.innerHTML += `<td>${formatFundValue(val, fmt)}</td>`;
+            } else if (isMA && val !== null && val !== undefined) {
                 const dist = res.data[`${key}_dist`];
                 const days = res.data[`${key}_days`];
 
@@ -5838,30 +5963,51 @@ function renderROCAnalysisUI() {
         currentSheet.columns.forEach(col => {
             const key = getColumnKey(col);
             const params = JSON.parse(col.parameters);
+            const isFund = col.indicator_type.toLowerCase() === 'fundamental';
+            const isMA = !isFund && ['sma', 'ema', 'wma'].includes(col.indicator_type.toLowerCase());
+
             const th = document.createElement('th');
             th.setAttribute('data-sort', key);
             th.style.cursor = 'pointer';
-            th.innerHTML = `${col.indicator_type.toUpperCase()}(${Object.values(params).join(',')}) [${col.timeframe || 'D'}] <span class="sort-icon">↕</span>`;
+            if (isFund) {
+                const fundCol = FUNDAMENTAL_COLUMNS.find(c => c.field === params.field);
+                th.innerHTML = `${fundCol ? fundCol.label : params.field} <span class="sort-icon">↕</span>`;
+            } else {
+                th.innerHTML = `${col.indicator_type.toUpperCase()}(${Object.values(params).join(',')}) [${col.timeframe || 'D'}] <span class="sort-icon">↕</span>`;
+            }
             head.appendChild(th);
 
-            const isMA = ['sma', 'ema', 'wma'].includes(col.indicator_type.toLowerCase());
             const cfg = dynamicFilters[key] || { min: -Infinity, max: Infinity };
             const fth = document.createElement('th');
 
-            let filterHtml = `
-                <div class="range-filter">
-                    <input type="number" step="0.1" placeholder="${isMA ? 'Dist Min' : 'Min'}" class="dynamic-filter" data-col="${key}" data-type="min" value="${cfg.min === -Infinity ? '' : cfg.min}">
-                    <input type="number" step="0.1" placeholder="${isMA ? 'Dist Max' : 'Max'}" class="dynamic-filter" data-col="${key}" data-type="max" value="${cfg.max === Infinity ? '' : cfg.max}">
-                </div>`;
-
-            if (isMA) {
-                const daysKey = `${key}_days_filter`;
-                const daysCfg = dynamicFilters[daysKey] || { min: -Infinity, max: Infinity };
-                filterHtml += `
-                    <div class="range-filter" style="margin-top:5px">
-                        <input type="number" step="1" placeholder="Days Min" class="dynamic-filter" data-col="${daysKey}" data-type="min" value="${daysCfg.min === -Infinity ? '' : daysCfg.min}">
-                        <input type="number" step="1" placeholder="Days Max" class="dynamic-filter" data-col="${daysKey}" data-type="max" value="${daysCfg.max === Infinity ? '' : daysCfg.max}">
+            let filterHtml;
+            if (isFund) {
+                const fundColDef = FUNDAMENTAL_COLUMNS.find(c => c.field === params.field);
+                if (fundColDef && fundColDef.type === 'range') {
+                    filterHtml = `
+                        <div class="range-filter">
+                            <input type="number" step="0.1" placeholder="Min" class="dynamic-filter" data-col="${key}" data-type="min" value="${cfg.min === -Infinity ? '' : cfg.min}">
+                            <input type="number" step="0.1" placeholder="Max" class="dynamic-filter" data-col="${key}" data-type="max" value="${cfg.max === Infinity ? '' : cfg.max}">
+                        </div>`;
+                } else {
+                    filterHtml = '';
+                }
+            } else {
+                filterHtml = `
+                    <div class="range-filter">
+                        <input type="number" step="0.1" placeholder="${isMA ? 'Dist Min' : 'Min'}" class="dynamic-filter" data-col="${key}" data-type="min" value="${cfg.min === -Infinity ? '' : cfg.min}">
+                        <input type="number" step="0.1" placeholder="${isMA ? 'Dist Max' : 'Max'}" class="dynamic-filter" data-col="${key}" data-type="max" value="${cfg.max === Infinity ? '' : cfg.max}">
                     </div>`;
+
+                if (isMA) {
+                    const daysKey = `${key}_days_filter`;
+                    const daysCfg = dynamicFilters[daysKey] || { min: -Infinity, max: Infinity };
+                    filterHtml += `
+                        <div class="range-filter" style="margin-top:5px">
+                            <input type="number" step="1" placeholder="Days Min" class="dynamic-filter" data-col="${daysKey}" data-type="min" value="${daysCfg.min === -Infinity ? '' : daysCfg.min}">
+                            <input type="number" step="1" placeholder="Days Max" class="dynamic-filter" data-col="${daysKey}" data-type="max" value="${daysCfg.max === Infinity ? '' : daysCfg.max}">
+                        </div>`;
+                }
             }
             fth.innerHTML = filterHtml;
             filterRow.appendChild(fth);
@@ -5937,9 +6083,14 @@ function renderROCAnalysisUI() {
             currentSheet.columns.forEach(col => {
                 const key = getColumnKey(col);
                 const val = res.data[key];
-                const isMA = ['sma', 'ema', 'wma'].includes(col.indicator_type.toLowerCase());
+                const isFund = col.indicator_type.toLowerCase() === 'fundamental';
+                const isMA = !isFund && ['sma', 'ema', 'wma'].includes(col.indicator_type.toLowerCase());
 
-                if (isMA && val !== null && val !== undefined) {
+                if (isFund) {
+                    const params = JSON.parse(col.parameters);
+                    const fmt = getFundamentalFormat(params.field);
+                    rRow.innerHTML += `<td>${formatFundValue(val, fmt)}</td>`;
+                } else if (isMA && val !== null && val !== undefined) {
                     const dist = res.data[`${key}_dist`];
                     const days = res.data[`${key}_days`];
 
@@ -6018,29 +6169,50 @@ function renderBaseScreeningTable(sheet) {
     if (sheet) {
         sheet.columns.forEach(col => {
             const key = getColumnKey(col), params = JSON.parse(col.parameters);
+            const isFund = col.indicator_type.toLowerCase() === 'fundamental';
+            const isMA = !isFund && ['sma', 'ema', 'wma'].includes(col.indicator_type.toLowerCase());
+
             const th = document.createElement('th');
             th.setAttribute('data-sort', key); th.style.cursor = 'pointer';
-            th.innerHTML = `${col.indicator_type.toUpperCase()}(${Object.values(params).join(',')}) [${col.timeframe || 'D'}] <span class="sort-icon">↕</span>`;
+            if (isFund) {
+                const fundCol = FUNDAMENTAL_COLUMNS.find(c => c.field === params.field);
+                th.innerHTML = `${fundCol ? fundCol.label : params.field} <span class="sort-icon">↕</span>`;
+            } else {
+                th.innerHTML = `${col.indicator_type.toUpperCase()}(${Object.values(params).join(',')}) [${col.timeframe || 'D'}] <span class="sort-icon">↕</span>`;
+            }
             head.appendChild(th);
 
-            const isMA = ['sma', 'ema', 'wma'].includes(col.indicator_type.toLowerCase());
             const cfg = dynamicFilters[key] || { min: -Infinity, max: Infinity };
             const fth = document.createElement('th');
 
-            let filterHtml = `
-                <div class="range-filter">
-                    <input type="number" step="0.1" placeholder="${isMA ? 'Dist Min' : 'Min'}" class="dynamic-filter" data-col="${key}" data-type="min" value="${cfg.min === -Infinity ? '' : cfg.min}">
-                    <input type="number" step="0.1" placeholder="${isMA ? 'Dist Max' : 'Max'}" class="dynamic-filter" data-col="${key}" data-type="max" value="${cfg.max === Infinity ? '' : cfg.max}">
-                </div>`;
-
-            if (isMA) {
-                const daysKey = `${key}_days_filter`;
-                const daysCfg = dynamicFilters[daysKey] || { min: -Infinity, max: Infinity };
-                filterHtml += `
-                    <div class="range-filter" style="margin-top:5px">
-                        <input type="number" step="1" placeholder="Days Min" class="dynamic-filter" data-col="${daysKey}" data-type="min" value="${daysCfg.min === -Infinity ? '' : daysCfg.min}">
-                        <input type="number" step="1" placeholder="Days Max" class="dynamic-filter" data-col="${daysKey}" data-type="max" value="${daysCfg.max === Infinity ? '' : daysCfg.max}">
+            let filterHtml;
+            if (isFund) {
+                const fundColDef = FUNDAMENTAL_COLUMNS.find(c => c.field === params.field);
+                if (fundColDef && fundColDef.type === 'range') {
+                    filterHtml = `
+                        <div class="range-filter">
+                            <input type="number" step="0.1" placeholder="Min" class="dynamic-filter" data-col="${key}" data-type="min" value="${cfg.min === -Infinity ? '' : cfg.min}">
+                            <input type="number" step="0.1" placeholder="Max" class="dynamic-filter" data-col="${key}" data-type="max" value="${cfg.max === Infinity ? '' : cfg.max}">
+                        </div>`;
+                } else {
+                    filterHtml = '';
+                }
+            } else {
+                filterHtml = `
+                    <div class="range-filter">
+                        <input type="number" step="0.1" placeholder="${isMA ? 'Dist Min' : 'Min'}" class="dynamic-filter" data-col="${key}" data-type="min" value="${cfg.min === -Infinity ? '' : cfg.min}">
+                        <input type="number" step="0.1" placeholder="${isMA ? 'Dist Max' : 'Max'}" class="dynamic-filter" data-col="${key}" data-type="max" value="${cfg.max === Infinity ? '' : cfg.max}">
                     </div>`;
+
+                if (isMA) {
+                    const daysKey = `${key}_days_filter`;
+                    const daysCfg = dynamicFilters[daysKey] || { min: -Infinity, max: Infinity };
+                    filterHtml += `
+                        <div class="range-filter" style="margin-top:5px">
+                            <input type="number" step="1" placeholder="Days Min" class="dynamic-filter" data-col="${daysKey}" data-type="min" value="${daysCfg.min === -Infinity ? '' : daysCfg.min}">
+                            <input type="number" step="1" placeholder="Days Max" class="dynamic-filter" data-col="${daysKey}" data-type="max" value="${daysCfg.max === Infinity ? '' : daysCfg.max}">
+                        </div>`;
+                }
             }
             fth.innerHTML = filterHtml;
             filterRow.appendChild(fth);
@@ -6114,9 +6286,14 @@ function renderBaseScreeningTable(sheet) {
             sheet.columns.forEach(col => {
                 const key = getColumnKey(col);
                 const val = res.data[key];
-                const isMA = ['sma', 'ema', 'wma'].includes(col.indicator_type.toLowerCase());
+                const isFund = col.indicator_type.toLowerCase() === 'fundamental';
+                const isMA = !isFund && ['sma', 'ema', 'wma'].includes(col.indicator_type.toLowerCase());
 
-                if (isMA && val !== null && val !== undefined) {
+                if (isFund) {
+                    const params = JSON.parse(col.parameters);
+                    const fmt = getFundamentalFormat(params.field);
+                    row.innerHTML += `<td>${formatFundValue(val, fmt)}</td>`;
+                } else if (isMA && val !== null && val !== undefined) {
                     const dist = res.data[`${key}_dist`];
                     const days = res.data[`${key}_days`];
 
@@ -8113,6 +8290,12 @@ const FUNDAMENTAL_COLUMNS = [
     { field: 'split_date', label: 'Split Date', type: 'text', format: 'date', rawKey: 'lastSplitDate' },
     { field: 'sector', label: 'Settore', type: 'text', rawKey: 'sector' },
     { field: 'industry', label: 'Industria', type: 'text', rawKey: 'industry' },
+
+    // --- Date Eventi ---
+    { field: 'earnings_date', label: 'Prossimi Utili', type: 'text', format: 'date', rawKey: 'earningsTimestamp' },
+    { field: 'last_dividend_date', label: 'Ultimo Dividendo', type: 'text', format: 'date', rawKey: 'lastDividendDate' },
+    { field: 'days_to_earnings', label: 'Giorni agli Utili', type: 'range', format: 'float2' },
+    { field: 'days_since_dividend', label: 'Giorni dal Dividendo', type: 'range', format: 'float2' },
 ];
 
 function formatFundValue(val, format) {
@@ -8192,6 +8375,14 @@ function enrichFundamentalData(data) {
             }
             if ((item.ex_div_date === undefined || item.ex_div_date === null) && raw.lastDividendDate !== undefined) {
                 item.ex_div_date = raw.lastDividendDate;
+            }
+            // Compute day distances from dates
+            const now = Date.now();
+            if (typeof item.earnings_date === 'number') {
+                item.days_to_earnings = Math.round((item.earnings_date * 1000 - now) / 86400000);
+            }
+            if (typeof item.last_dividend_date === 'number') {
+                item.days_since_dividend = Math.round((now - item.last_dividend_date * 1000) / 86400000);
             }
         } catch (e) {}
         return item;
@@ -9328,10 +9519,17 @@ async function autoRefreshAction() {
             const tickers = [...new Set(positions.map(p => p.ticker).filter(Boolean))];
             if (tickers.length > 0) {
                 if (statusEl) statusEl.textContent = `⟳ ${tickers.length} ticker...`;
-                for (const t of tickers) {
-                    try {
-                        await fetch(`/tickers/${encodeURIComponent(t)}/update-data/?years=1`, { method: 'POST' });
-                    } catch (_) {}
+                bulkUpdateInProgress = true;
+                updateBulkIndicator();
+                try {
+                    for (const t of tickers) {
+                        try {
+                            await fetch(`/tickers/${encodeURIComponent(t)}/update-data/?years=1`, { method: 'POST' });
+                        } catch (_) {}
+                    }
+                } finally {
+                    bulkUpdateInProgress = false;
+                    updateBulkIndicator();
                 }
             }
             await refreshPortfolio();
@@ -9342,15 +9540,22 @@ async function autoRefreshAction() {
                 const tickerOptions = getListTickers();
                 if (tickerOptions.length === 0) return;
                 if (statusEl) statusEl.textContent = `⟳ ${tickerOptions.length} ticker...`;
+                bulkUpdateInProgress = true;
+                updateBulkIndicator();
                 let count = 0;
-                for (const symbol of tickerOptions) {
-                    try {
-                        await fetch(`/tickers/${encodeURIComponent(symbol)}/update-data/?years=1`, { method: 'POST' });
-                        count++;
-                        if (statusEl) statusEl.textContent = `⟳ ${count}/${tickerOptions.length}`;
-                        if (symbol === activeTicker) updateChart(symbol);
-                    } catch (_) {}
-                    if (!refreshTimerRunning) break;
+                try {
+                    for (const symbol of tickerOptions) {
+                        try {
+                            await fetch(`/tickers/${encodeURIComponent(symbol)}/update-data/?years=1`, { method: 'POST' });
+                            count++;
+                            if (statusEl) statusEl.textContent = `⟳ ${count}/${tickerOptions.length}`;
+                            if (symbol === activeTicker) updateChart(symbol);
+                        } catch (_) {}
+                        if (!refreshTimerRunning) break;
+                    }
+                } finally {
+                    bulkUpdateInProgress = false;
+                    updateBulkIndicator();
                 }
                 checkAndNotifyAlarms();
             } else {
